@@ -478,6 +478,35 @@ describe('PeerLink: lifecycle', () => {
     await until(() => a.peer.dataOpen && b.peer.dataOpen)
   })
 
+  it("a peer's restart re-sends our young connection's offer that got lost while she was away", async () => {
+    const links = relayPair()
+    const a = watch(make('a', links.a, undefined, { connectTimeoutMs: 5_000, offerResendMs: 200 }))
+    const b1 = make('b', links.b)
+    a.peer.connect()
+    b1.connect()
+    await until(() => a.peer.dataOpen && b1.dataOpen)
+    // 'b' leaves (pagehide closes her link); 'a' sees the channel close and connects again,
+    // but nobody is there: the restart, the offer and the candidates are lost.
+    links.a.partner = null
+    b1.close()
+    await until(() => !a.peer.dataOpen)
+    a.peer.connect()
+    await until(() => pcs().at(-1)!.signalingState === 'have-local-offer')
+    const pcA = pcs().at(-1)!
+    await settle()
+    // She is back a moment later (well within the restart grace) and starts fresh.
+    const b2Link = new FakeServerLink('b')
+    b2Link.partner = links.a
+    links.a.partner = b2Link
+    const b2 = watch(make('b', b2Link))
+    b2.peer.connect()
+    // Far sooner than the connect timeout, on the same young connection.
+    await until(() => a.peer.dataOpen && b2.peer.dataOpen, 1_500)
+    expect(pcA.closed).toBe(false)
+    expect(a.peer.sendData(msg('a', 'снова'))).toBe(true)
+    await until(() => b2.frames.length === 1)
+  })
+
   it('close() while the ICE servers are loading creates nothing', async () => {
     const links = relayPair()
     let resolve!: (v: RTCIceServer[]) => void

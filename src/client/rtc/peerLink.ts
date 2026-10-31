@@ -33,6 +33,11 @@ export type PeerLinkOptions = {
    * (both sides connecting at once); an older one is stuck (a lost offer or answer) and is rebuilt.
    */
   restartGraceMs?: number
+  /**
+   * After a peer's `restart`, our offer still unanswered this much later is sent again
+   * (it went out while she was away and was lost).
+   */
+  offerResendMs?: number
   now?: () => number
 }
 
@@ -40,6 +45,8 @@ export type PeerLinkOptions = {
 export const CONNECT_TIMEOUT_MS = 15_000
 /** See PeerLinkOptions.restartGraceMs. */
 export const RESTART_GRACE_MS = 3_000
+/** See PeerLinkOptions.offerResendMs. Covers her ICE-server fetch plus a round trip. */
+export const OFFER_RESEND_MS = 1_500
 
 const CHANNEL_LABEL = 'chat'
 
@@ -52,7 +59,9 @@ const debug = (...args: unknown[]) => console.debug('[peerLink]', ...args)
  *   that was ever established (it belongs to an older session, e.g. before a reload) and
  *   starts a fresh one without sending `restart` back; a connection that never opened is
  *   kept while it is young (RESTART_GRACE_MS), so two sides connecting at once do not tear
- *   each other down; an older one that never opened is stuck and is rebuilt.
+ *   each other down; an older one that never opened is stuck and is rebuilt. If the kept
+ *   connection's offer is still unanswered OFFER_RESEND_MS after the `restart`, it went out
+ *   while the peer was away: it is sent again with our candidates.
  * - A connection whose data channel has not opened within CONNECT_TIMEOUT_MS (an offer or
  *   answer got lost) is torn down and started over, announcing `restart`.
  * - An incoming offer when there is no connection creates one (the peer got there first).
@@ -69,6 +78,7 @@ export class PeerLink {
   private readonly Impl: typeof RTCPeerConnection
   private readonly connectTimeoutMs: number
   private readonly restartGraceMs: number
+  private readonly offerResendMs: number
   private readonly now: () => number
 
   private pc: RTCPeerConnection | null = null
@@ -83,10 +93,13 @@ export class PeerLink {
   /** When the current connection was created. */
   private createdAt = 0
   private connectTimer: ReturnType<typeof setTimeout> | null = null
+  private offerResendTimer: ReturnType<typeof setTimeout> | null = null
 
   private makingOffer = false
   private ignoreOffer = false
   private pendingCandidates: RTCIceCandidateInit[] = []
+  /** Our candidates signaled for the current connection (re-sent with a lost offer). */
+  private localCandidates: RTCIceCandidateInit[] = []
 
   private localStream: MediaStream | null = null
   private readonly senders = new Map<string, RTCRtpSender>()
@@ -111,6 +124,7 @@ export class PeerLink {
     this.Impl = opts.RTCPeerConnectionImpl ?? globalThis.RTCPeerConnection
     this.connectTimeoutMs = opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
     this.restartGraceMs = opts.restartGraceMs ?? RESTART_GRACE_MS
+    this.offerResendMs = opts.offerResendMs ?? OFFER_RESEND_MS
     this.now = opts.now ?? (() => Date.now())
     this.link.onMessage((msg) => {
       if (msg.t === 'signal') this.enqueue(() => this.receive(msg.env))
@@ -226,7 +240,9 @@ export class PeerLink {
     pc.onicecandidate = (ev) => {
       if (this.pc !== pc) return
       const c = ev.candidate
-      this.signal({ kind: 'candidate', candidate: c ? candidateInit(c) : null })
+      const init = c ? candidateInit(c) : null
+      if (init) this.localCandidates.push(init)
+      this.signal({ kind: 'candidate', candidate: init })
     }
     pc.ondatachannel = (ev) => {
       if (this.pc !== pc) return
@@ -266,10 +282,13 @@ export class PeerLink {
     this.channel = null
     if (this.connectTimer !== null) clearTimeout(this.connectTimer)
     this.connectTimer = null
+    if (this.offerResendTimer !== null) clearTimeout(this.offerResendTimer)
+    this.offerResendTimer = null
     this.everOpen = false
     this.makingOffer = false
     this.ignoreOffer = false
     this.pendingCandidates = []
+    this.localCandidates = []
     this.senders.clear()
     if (ch) {
       ch.onopen = null
@@ -393,7 +412,26 @@ export class PeerLink {
     if (this.creating) return
     // A young connection that never opened is already fresh: keep it (both sides connecting
     // at once). An older one is stuck (its offer or answer was lost): rebuild.
-    if (this.pc && !this.everOpen && this.now() - this.createdAt < this.restartGraceMs) return
+    const pc = this.pc
+    if (pc && !this.everOpen && this.now() - this.createdAt < this.restartGraceMs) {
+      // Its offer may have gone out while the peer was away (lost): she would never answer
+      // and we would sit out the connect timeout. Or it is right behind her restart (both
+      // connecting at once) and she answers shortly. We cannot tell yet, so if that same offer
+      // is still unanswered a little later, send it again with our candidates. Rebuilding would
+      // break the second case; a duplicate offer is harmless.
+      const offer = pc.signalingState === 'have-local-offer' ? pc.localDescription?.sdp : undefined
+      if (offer !== undefined && this.offerResendTimer === null) {
+        this.offerResendTimer = setTimeout(() => {
+          this.offerResendTimer = null
+          if (this.pc !== pc || this.everOpen || pc.signalingState !== 'have-local-offer') return
+          if (!pc.localDescription || pc.localDescription.sdp !== offer) return
+          debug('offer still unanswered after the peer restarted, sending it again')
+          this.signal({ kind: 'description', description: descriptionInit(pc.localDescription) })
+          for (const c of this.localCandidates) this.signal({ kind: 'candidate', candidate: c })
+        }, this.offerResendMs)
+      }
+      return
+    }
     await this.start(++this.gen, false)
   }
 
