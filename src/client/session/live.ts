@@ -98,6 +98,9 @@ function mediaError(err: unknown): string {
   return T.media
 }
 
+/** A shown error clears itself after this long. */
+export const ERROR_TTL_MS = 8_000
+
 /** While the friend is here but the direct link is not open, connect() is repeated this often. */
 export const DIRECT_RETRY_MS = 5_000
 
@@ -213,6 +216,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   let pendingSub: PushSubscriptionJSONLike | null = null
   let sweepTimer: ReturnType<typeof setTimeout> | null = null
   let retryTimer: ReturnType<typeof setInterval> | null = null
+  let errorTimer: ReturnType<typeof setTimeout> | null = null
   let media: CallMedia | null = null
   /** A call action is waiting for getUserMedia; no second one starts meanwhile. */
   let acquiring = false
@@ -224,6 +228,20 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   let pushedCall: { kind: CallKind; at: number } | null = null
 
   const pageOffs: (() => void)[] = []
+
+  // ---------- errors ----------
+
+  /** Shows a short error; it clears itself after ERROR_TTL_MS. */
+  const setError = (text: string | null) => {
+    if (errorTimer !== null) clearTimeout(errorTimer)
+    errorTimer = null
+    state.error = text
+    if (text === null || disposed) return
+    errorTimer = setTimeout(() => {
+      errorTimer = null
+      if (state.error === text) state.error = null
+    }, ERROR_TTL_MS)
+  }
 
   // ---------- page ----------
 
@@ -297,9 +315,12 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
   const acquire = async (c: MediaStreamConstraints): Promise<MediaStream | null> => {
     try {
-      return markRaw(await deps.getUserMedia(c))
+      const stream = markRaw(await deps.getUserMedia(c))
+      // The mic and camera work now: an older media error no longer applies.
+      setError(null)
+      return stream
     } catch (err) {
-      state.error = mediaError(err)
+      setError(mediaError(err))
       return null
     }
   }
@@ -390,7 +411,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       case 'error':
         if (msg.code === 'unauthorized') return void revoked()
         if (msg.code === 'not-allowed') {
-          state.error = T.notAllowed
+          setError(T.notAllowed)
           // A call the server refused never got confirmed: release the mic and camera.
           if (media && !media.confirmed) endMedia()
         }
@@ -506,7 +527,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     state.self = null
     state.peer = null
     state.messages = []
-    state.error = T.revoked
+    setError(T.revoked)
     await deps.config.clear().catch(() => {})
     await deps.messages.save([]).catch(() => {})
   }
@@ -554,7 +575,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     stop()
     if (replacing) await deps.messages.save([])
     await deps.config.save(config)
-    state.error = null
+    setError(null)
     await start(config)
   }
 
@@ -597,13 +618,13 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
     sendText(text) {
       if (!rt) {
-        state.error = T.notPaired
+        setError(T.notPaired)
         return
       }
       try {
         rt.store.compose(text)
       } catch (err) {
-        if ((err as Error).message === 'message too long') state.error = T.tooLong
+        if ((err as Error).message === 'message too long') setError(T.tooLong)
         return
       }
       flushOutbox()
@@ -717,11 +738,13 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       state.missedCall = null
     },
     dismissError() {
-      state.error = null
+      setError(null)
     },
 
     dispose() {
       disposed = true
+      if (errorTimer !== null) clearTimeout(errorTimer)
+      errorTimer = null
       for (const off of pageOffs) off()
       stop()
     },

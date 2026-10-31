@@ -46,6 +46,18 @@ describe('ChatScreen', () => {
     expect(wrapper.findAll('.row').at(-1)!.get('[data-test="bubble"]').classes()).not.toContain('pending')
   })
 
+  it('the error bar sits above the floating call bubble and its × dismisses it', async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
+    session.dev.setError('Нет доступа к микрофону')
+    await nextTick()
+    const bar = wrapper.get('[data-test="error"]')
+    // Vant's floating bubble uses z-index 999 (--van-floating-bubble-z-index).
+    expect(Number((bar.element as HTMLElement).style.zIndex)).toBeGreaterThan(999)
+    expect((bar.element as HTMLElement).style.position).toBe('relative')
+    await bar.get('.van-notice-bar__right-icon').trigger('click')
+    expect(session.state.error).toBeNull()
+  })
+
   it('my messages and the friend’s messages sit on different sides', async () => {
     const { wrapper } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
     const rows = wrapper.findAll('.row')

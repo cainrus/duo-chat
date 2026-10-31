@@ -7,7 +7,7 @@ import type { DeviceConfig, DeviceConfigStore } from '../device/config'
 import type { MessagePersistence, StoredMessage } from '../messages/store'
 import type { LinkStatus, ServerLink } from '../net/serverLink'
 import type { DataFrame } from '../rtc/peerLink'
-import { createLiveSession, DIRECT_RETRY_MS, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
+import { createLiveSession, DIRECT_RETRY_MS, ERROR_TTL_MS, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
 import type { Profile } from './types'
 
 // ---------- fakes ----------
@@ -703,6 +703,37 @@ describe('live session: calls', () => {
     await h.session.startCall('voice')
     expect(h.session.state.error).toMatch(/Нет доступа/)
     expect(h.link().sentOf('call')).toEqual([])
+  })
+
+  it('a media error clears once the mic works, and on dismiss', async () => {
+    const h = await ready()
+    h.media.fail = Object.assign(new Error('busy'), { name: 'NotReadableError' })
+    await h.session.startCall('voice')
+    expect(h.session.state.error).toMatch(/заняты/)
+    h.media.fail = null
+    await h.session.startCall('voice')
+    expect(h.link().sentOf('call')).toHaveLength(1)
+    expect(h.session.state.error).toBeNull()
+
+    h.session.hangUp()
+    h.media.fail = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    h.link().deliver({ t: 'view', view: view() })
+    await h.session.startCall('voice')
+    expect(h.session.state.error).toMatch(/Нет доступа/)
+    h.session.dismissError()
+    expect(h.session.state.error).toBeNull()
+  })
+
+  it('an error clears itself after a few seconds', async () => {
+    vi.useFakeTimers({ now: T0 })
+    const h = await ready()
+    h.media.fail = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    await h.session.startCall('voice')
+    expect(h.session.state.error).toMatch(/Нет доступа/)
+    vi.advanceTimersByTime(ERROR_TTL_MS - 1)
+    expect(h.session.state.error).not.toBeNull()
+    vi.advanceTimersByTime(1)
+    expect(h.session.state.error).toBeNull()
   })
 
   it('mic and camera toggles; camera in a voice call adds a video track', async () => {

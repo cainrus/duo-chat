@@ -17,6 +17,9 @@ import IconPhoneMissed from '~icons/ph/phone-incoming-fill'
 import IconOffline from '~icons/ph/wifi-slash-bold'
 import IconX from '~icons/ph/x-bold'
 
+/** Vant's floating bubble sits at z-index 999; the error bar goes above it. */
+const ERROR_BAR_STYLE = { position: 'relative', zIndex: 1000 } as const
+
 defineProps<{ missedCall: CallKind | null }>()
 const emit = defineEmits<{ callBack: [kind: CallKind]; dismissMissed: [] }>()
 
@@ -91,7 +94,18 @@ watch(
       <DuoAvatar :avatar="s.me?.avatar" :size="40" class="head-me" />
     </header>
 
-    <van-notice-bar v-if="s.error" :text="s.error" mode="closeable" wrapable color="var(--van-danger-color)" background="#FDECEF" @close="duo.dismissError()" />
+    <!-- Above the floating "back to call" bubble (z-index 999), so its × stays tappable. -->
+    <van-notice-bar
+      v-if="s.error"
+      :text="s.error"
+      mode="closeable"
+      wrapable
+      color="var(--van-danger-color)"
+      background="#FDECEF"
+      :style="ERROR_BAR_STYLE"
+      data-test="error"
+      @close="duo.dismissError()"
+    />
 
     <main ref="list" class="chat-list" data-test="timeline">
       <div v-if="!s.messages.length" class="chat-empty" aria-hidden="true">👋</div>
