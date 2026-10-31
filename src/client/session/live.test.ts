@@ -190,8 +190,6 @@ type Harness = {
     visible: boolean
     emit: (v: boolean) => void
     leave: () => void
-    search: string
-    click: (url: string) => void
     /** How many times the session closed the shown notifications. */
     closed: number
   }
@@ -211,7 +209,6 @@ async function paired(side: Side = 'a') {
 function harness(opts: {
   config?: DeviceConfig | null
   messages?: StoredMessage[]
-  search?: string
   fetch?: (url: string, init?: RequestInit) => Response
   currentSub?: PushSubscriptionJSONLike | null
 } = {}): Harness {
@@ -223,18 +220,13 @@ function harness(opts: {
   const media: Harness['media'] = { constraints: [], streams: [], fail: null }
   const clock = { now: T0 }
   const visCbs = new Set<(v: boolean) => void>()
-  const clickCbs = new Set<(u: string) => void>()
   const leaveCbs = new Set<() => void>()
   const pageState = {
     closed: 0,
     visible: true,
-    search: opts.search ?? '',
     emit: (v: boolean) => {
       pageState.visible = v
       for (const cb of visCbs) cb(v)
-    },
-    click: (u: string) => {
-      for (const cb of clickCbs) cb(u)
     },
     /** pagehide: the browser fires it, then the page is hidden. */
     leave: () => {
@@ -247,15 +239,6 @@ function harness(opts: {
     onVisibility: (cb) => {
       visCbs.add(cb)
       return () => visCbs.delete(cb)
-    },
-    takeLaunchSearch: () => {
-      const s = pageState.search
-      pageState.search = ''
-      return s
-    },
-    onNotificationClick: (cb) => {
-      clickCbs.add(cb)
-      return () => clickCbs.delete(cb)
     },
     onLeave: (cb) => {
       leaveCbs.add(cb)
@@ -828,7 +811,6 @@ describe('live session: call switch', () => {
     await connected(h)
     const stream = h.media.streams[0]!
     expect(h.peer().localStreams).toEqual([stream])
-    expect(h.session.state.missedCall).toBeNull()
 
     await h.session.setMode('off')
     expect(h.link().sentOf('callEnd')).toHaveLength(1)
@@ -836,8 +818,9 @@ describe('live session: call switch', () => {
     expect(h.session.state.myMode).toBe('off')
     h.link().deliver({ t: 'callEnded', reason: 'hangup' })
     h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toBeNull()
     expect(h.session.state.peerMode).toBe('off')
+    // A connected call leaves no service line.
+    expect(h.session.state.messages).toEqual([])
   })
 
   it('her call she stops waiting in puts her back to OFF', async () => {
@@ -1136,63 +1119,64 @@ describe('live session: video needs both switches on VIDEO', () => {
   })
 })
 
-describe('live session: missed calls', () => {
+describe('live session: the voice room service line', () => {
   let config: DeviceConfig
   beforeEach(async () => {
     config = (await paired()).config
   })
 
-  it('a ringing call the friend cancelled is missed; a new call clears it', async () => {
+  async function waiting() {
     h = harness({ config })
     await h.session.ready
-    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
-    h.clock.now = T0 + 7
-    h.link().deliver({ t: 'callEnded', reason: 'cancelled' })
     h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toEqual({ at: T0 + 7 })
-    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
-    expect(h.session.state.missedCall).toBeNull()
-  })
-
-  it('a call she waited in for a long time without us joining is missed', async () => {
-    h = harness({ config })
-    await h.session.ready
-    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
-    h.clock.now = T0 + 30 * 60_000
-    h.link().deliver({ t: 'callEnded', reason: 'cancelled' })
-    h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toEqual({ at: T0 + 30 * 60_000 })
-  })
-
-  it('opened from a call notification after the call is gone: missed', async () => {
-    h = harness({ config, search: `?from=call-push&at=${T0 - 5000}` })
-    await h.session.ready
-    h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toEqual({ at: T0 - 5000 })
-    h.session.dismissMissedCall()
-    expect(h.session.state.missedCall).toBeNull()
-  })
-
-  it('opened from a call notification while it still rings: not missed', async () => {
-    h = harness({ config, search: `?from=call-push&at=${T0}` })
-    await h.session.ready
-    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
-    expect(h.session.state.missedCall).toBeNull()
-  })
-
-  it('a notification click forwarded to an open window is checked on the next view', async () => {
-    h = harness({ config })
-    await h.session.ready
-    h.page.click(`/?from=call-push&at=${T0}`)
-    h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toEqual({ at: T0 })
-  })
-
-  it('starting a call clears a missed call', async () => {
-    h = harness({ config, search: `?from=call-push&at=${T0}` })
-    await h.session.ready
-    h.link().deliver({ t: 'view', view: view() })
+    h.peer().setOpen(true)
     await h.session.setMode('audio')
-    expect(h.session.state.missedCall).toBeNull()
+    h.link().deliver({ t: 'view', view: view({ outgoing: true }) })
+    return h
+  }
+  const voiceItems = (h: Harness) => h.session.state.messages.filter((m) => m.kind === 'voice')
+
+  it('leaving the room before she joined composes one voice item, sent to her like a message', async () => {
+    const h = await waiting()
+    h.clock.now = T0 + 5 * 60_000
+    await h.session.setMode('off')
+    expect(voiceItems(h)).toEqual([{ id: expect.any(String), from: 'a', text: '', sentAt: T0 + 5 * 60_000, kind: 'voice' }])
+    expect(h.peer().out.filter((f) => f.t === 'msg')).toEqual([{ t: 'msg', m: voiceItems(h)[0] }])
+    expect(h.session.state.pendingIds).toEqual([voiceItems(h)[0]!.id])
+    // The server's answer does not add a second one.
+    h.link().deliver({ t: 'callEnded', reason: 'cancelled' })
+    h.link().deliver({ t: 'view', view: view({ outgoing: true }) }) // a stale view still in flight
+    h.link().deliver({ t: 'view', view: view() })
+    expect(voiceItems(h)).toHaveLength(1)
+  })
+
+  it('also when the app is hidden, or the wait ends from the server side', async () => {
+    let h = await waiting()
+    h.page.emit(false)
+    expect(voiceItems(h)).toHaveLength(1)
+    h.session.dispose()
+
+    h = await waiting()
+    h.link().deliver({ t: 'view', view: view() })
+    expect(voiceItems(h)).toHaveLength(1)
+  })
+
+  it('a call she joined leaves no voice item', async () => {
+    const h = await waiting()
+    h.link().deliver({ t: 'view', view: view({ inCall: true }) })
+    await flush()
+    await h.session.setMode('off')
+    h.link().deliver({ t: 'callEnded', reason: 'hangup' })
+    h.link().deliver({ t: 'view', view: view() })
+    expect(voiceItems(h)).toEqual([])
+  })
+
+  it('her voice item arrives like a message and is acked', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.peer().setOpen(true)
+    h.peer().receive({ t: 'msg', m: { id: 'v1', from: 'b', text: '', sentAt: T0, kind: 'voice' } })
+    expect(voiceItems(h)).toEqual([{ id: 'v1', from: 'b', text: '', sentAt: T0, kind: 'voice' }])
+    expect(h.peer().out).toContainEqual({ t: 'ack', ids: ['v1'] })
   })
 })

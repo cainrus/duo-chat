@@ -10,26 +10,16 @@ describe('App', () => {
     expect(wrapper.find('[data-test="setup"]').exists()).toBe(true)
   })
 
-  it('a call the friend gave up on shows the missed-call card from state.missedCall, and lastCallEnded is cleared', async () => {
+  it('a voice room she left before we joined shows a service line in the chat, no card', async () => {
     const { wrapper, session } = mountWithDuo(App, { attachTo: document.body })
     session.dev.incoming()
     await nextTick()
     session.dev.peerCancels()
     await nextTick()
     await nextTick()
-    expect(session.state.missedCall).not.toBeNull()
     expect(session.state.lastCallEnded).toBeNull()
-    expect(wrapper.find('[data-test="missed-call"]').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('a missed call from a push shows the card; dismissing clears state.missedCall', async () => {
-    const { wrapper, session } = mountWithDuo(App, { attachTo: document.body })
-    session.dev.missedFromPush()
-    await nextTick()
-    expect(wrapper.find('[data-test="missed-call"]').exists()).toBe(true)
-    await wrapper.find('.missed-close').trigger('click')
-    expect(session.state.missedCall).toBeNull()
+    expect(wrapper.get('[data-test="voice-item"]').text()).toMatch(/^📞 голосовой · \d\d:\d\d$/)
+    expect(wrapper.find('[data-test="missed-call"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

@@ -2,12 +2,10 @@
 // replaces `self.__WB_MANIFEST` below with the list of built files. It exports nothing.
 //
 // What it does:
-// - push: shows the one invitation, «Дуо: онлайн», whatever triggered it (ping, a
-//   message, the voice room). No names anywhere. One tag for all, so the new one replaces the old;
+// - push: shows the one notification, «онлайн», whatever triggered it (button, a message,
+//   the voice room). No names anywhere. One tag for all, so the new one replaces the old;
 //   expired ones still on screen are closed first (browsers cannot close them on a timer).
-// - notificationclick: focuses an open window of the app, or opens one. A call notification
-//   opens `/?from=call-push&at=..` (or posts the same URL to an open window as
-//   { t: 'notification-click', url }), so the app can show "missed call" when the call is over.
+// - notificationclick: focuses an open window of the app, or opens the chat.
 // - precaches the app shell, so the installed app opens without network (it still needs
 //   the network to talk to the friend). Never touches /api.
 
@@ -100,18 +98,15 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const data = event.notification.data as { url?: unknown } | null
-  const url = typeof data?.url === 'string' && data.url.startsWith('/') ? data.url : '/'
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       const mine = windows.find((w) => new URL(w.url).origin === self.location.origin)
       if (mine) {
-        mine.postMessage({ t: 'notification-click', url })
         await mine.focus()
         return
       }
-      await self.clients.openWindow(url)
+      await self.clients.openWindow('/')
     })(),
   )
 })

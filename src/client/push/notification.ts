@@ -2,17 +2,16 @@
 // The server sends only { kind } (see PushPayload). There are no names at all (owner,
 // 2026-10-31: only two people), so the text is fixed.
 //
-// Every invitation looks the same (owner, 2026-10-31): title «Дуо», body «онлайн»,
-// whatever triggered it (ping, a message, the voice room). The kind stays only in `data`, to
-// decide where a click leads. One tag for all, so a new one replaces the old: at most one duo
+// Every invitation looks the same (owner, 2026-10-31): the single word «онлайн» as the
+// title, no body, no app name, whatever triggered it (button, a message, the voice room); a
+// click just opens the chat. One tag for all, so a new one replaces the old: at most one
 // notification on screen. Browsers cannot dismiss a shown notification on a timer, so expiry
 // is enforced when the next push arrives and when the app is opened (see closeExpired).
 
 import { INVITE_TTL_MS } from '@shared/constants'
 import type { PushPayload } from '@shared/protocol'
 
-export const NOTIFICATION_TITLE = 'Дуо'
-export const NOTIFICATION_BODY = 'онлайн'
+export const NOTIFICATION_TITLE = 'онлайн'
 /** The one tag every duo notification uses. */
 export const NOTIFICATION_TAG = 'duo'
 
@@ -22,27 +21,10 @@ export type NotificationSpec = {
 }
 
 /**
- * Where a click on the notification leads, what triggered it, and when it stops being useful
- * (null: a call, valid until the app opens; a click after the caller left shows a missed call).
+ * When the notification stops being useful (null: a voice room one, which may wait long).
+ * A click always just opens the chat.
  */
-export type NotificationData = { url: string; kind: PushPayload['kind'] | null; expiresAt: number | null }
-
-/** Query parameters of the URL a call notification opens; read once by the app on startup. */
-export const CALL_PUSH_PARAM = 'from'
-export const CALL_PUSH_VALUE = 'call-push'
-
-export function callPushUrl(at: number): string {
-  return `/?${CALL_PUSH_PARAM}=${CALL_PUSH_VALUE}&at=${at}`
-}
-
-/** Parses `?from=call-push&at=..`; null for anything else. */
-export function parseCallPushUrl(search: string): { at: number } | null {
-  const q = new URLSearchParams(search)
-  if (q.get(CALL_PUSH_PARAM) !== CALL_PUSH_VALUE) return null
-  const at = Number(q.get('at'))
-  if (!Number.isFinite(at) || at <= 0) return null
-  return { at }
-}
+export type NotificationData = { url: '/'; expiresAt: number | null }
 
 export function parsePushPayload(text: string | null): PushPayload | null {
   if (!text) return null
@@ -63,23 +45,17 @@ export function parsePushPayload(text: string | null): PushPayload | null {
  * revokes push for a site whose push events show nothing.
  */
 export function notificationFor(payload: PushPayload | null, receivedAt: number): NotificationSpec {
-  const kind = payload?.kind ?? null
-  const call = kind === 'call'
+  const call = payload?.kind === 'call'
   return {
     title: NOTIFICATION_TITLE,
     options: {
-      body: NOTIFICATION_BODY,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
       lang: 'ru',
       tag: NOTIFICATION_TAG,
       renotify: true,
       timestamp: receivedAt,
-      data: {
-        url: call ? callPushUrl(receivedAt) : '/',
-        kind,
-        expiresAt: call ? null : receivedAt + INVITE_TTL_MS,
-      },
+      data: { url: '/', expiresAt: call ? null : receivedAt + INVITE_TTL_MS },
     },
   }
 }

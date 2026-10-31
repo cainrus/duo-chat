@@ -59,7 +59,6 @@ const groups: { title: string; items: Btn[] }[] = [
       { label: 'Она звонит 📞', run: () => dev.incoming() },
       { label: 'Она перестала ждать (пропущен)', run: () => dev.peerCancels() },
       { label: 'Она подключилась', run: () => dev.peerAccepts() },
-      { label: 'Пропущенный из пуша', run: () => dev.missedFromPush() },
       { label: 'Она: звук', run: () => dev.peerMode('audio') },
       { label: 'Она: видео', run: () => dev.peerMode('video') },
       { label: 'Она выключила (конец)', run: () => dev.peerHangsUp() },

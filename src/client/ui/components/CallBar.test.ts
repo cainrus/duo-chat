@@ -20,7 +20,7 @@ afterEach(() => {
 })
 
 function mountChat() {
-  const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
+  const { wrapper, session } = mountWithDuo(ChatScreen)
   const seg = (mode: 'off' | 'audio' | 'video') => wrapper.get(`[data-test="mode-${mode}"]`)
   const disabled = (mode: 'off' | 'audio' | 'video') => seg(mode).attributes('disabled') !== undefined
   const status = () => wrapper.get('[data-test="call-status"]').text()

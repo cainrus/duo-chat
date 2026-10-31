@@ -61,8 +61,8 @@ components, passed through each component's `#icon` slot.
   and the bell.
 - Message list: our `ChatBubble.vue`: background `var(--van-primary-color)` (mine) or
   `var(--van-background-2)` (theirs), `border-radius: var(--van-radius-lg)`. Emoji-only
-  messages get a large font (48px). "Missed call" marker: system bubble plus
-  `van-button round type="success" size="large"` for calling back.
+  messages get a large font (48px). A voice room left before the other joined is a
+  centred service line «📞 голосовой · HH:MM» (no button).
 - Input row: `van-field v-model type="textarea" rows="1" autosize :maxlength="500"
   :border="false"`, an emoji toggle `van-button round icon-only`, and a send button
   `van-button round type="primary"`.

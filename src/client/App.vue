@@ -51,18 +51,13 @@ watch(
     duo.dismissCallEnded()
   },
 )
-
-function callBack() {
-  duo.dismissMissedCall()
-  void duo.setMode('audio')
-}
 </script>
 
 <template>
   <van-config-provider :theme-vars="themeVars" theme="light" theme-vars-scope="global">
     <SetupScreen v-if="showSetup" @done="wizard = false" />
     <template v-else>
-      <ChatScreen :missed-call="!!s.missedCall" @call-back="callBack" @dismiss-missed="duo.dismissMissedCall()" />
+      <ChatScreen />
     </template>
     <!-- Remote audio lives at the root, so it plays whatever the chat shows. -->
     <MediaAudio v-if="s.view?.inCall" :stream="s.media.remote" />

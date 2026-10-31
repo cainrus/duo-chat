@@ -146,3 +146,30 @@ describe('persistence', () => {
     expect(first.persistence.saved).toEqual([])
   })
 })
+
+describe('voice room service items', () => {
+  it('composes a voice item that lives an hour and goes through the outbox like a message', async () => {
+    const { store, setNow } = makeStore()
+    await store.init()
+    const item = store.composeVoice()
+    expect(item).toEqual({ id: 'id1', from: 'a', text: '', sentAt: T0, kind: 'voice' })
+    expect(store.outbox()).toEqual([item])
+    expect(store.timeline()).toEqual([item])
+    setNow(T0 + MESSAGE_TTL_MS)
+    store.sweep()
+    expect(store.timeline()).toEqual([])
+  })
+
+  it('accepts a voice item from the friend with empty text, and rejects a broken one', async () => {
+    const { store } = makeStore()
+    await store.init()
+    expect(store.receive({ id: 'v1', from: 'b', text: '', sentAt: T0, kind: 'voice' })).toBe(true)
+    expect(store.timeline()).toEqual([{ id: 'v1', from: 'b', text: '', sentAt: T0, kind: 'voice' }])
+    // A voice item carries no text; an unknown kind and an empty text message are refused.
+    expect(store.receive({ id: 'v2', from: 'b', text: 'hi', sentAt: T0, kind: 'voice' })).toBe(false)
+    expect(store.receive({ id: 'v3', from: 'b', text: 'hi', sentAt: T0, kind: 'video' })).toBe(false)
+    expect(store.receive({ id: 'v4', from: 'b', text: '', sentAt: T0 })).toBe(false)
+    expect(store.receive({ id: 'v5', from: 'b', text: 'ok', sentAt: T0, kind: 'text' })).toBe(true)
+    expect(store.timeline().at(-1)).toEqual({ id: 'v5', from: 'b', text: 'ok', sentAt: T0 })
+  })
+})

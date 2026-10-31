@@ -42,13 +42,17 @@ describe('fake session', () => {
     expect(s.state).toMatchObject({ myMode: 'off', peerMode: 'off' })
   })
 
-  it('her call she stops waiting in is missed', () => {
+  it('a voice room left before the other joined leaves a voice line (hers or mine)', async () => {
     const s = make()
+    s.dev.clearChat()
     s.dev.incoming()
     s.dev.peerCancels()
     expect(s.state.view!.incoming).toBe(false)
     expect(s.state.peerMode).toBe('off')
-    expect(s.state.missedCall).not.toBeNull()
+    expect(s.state.messages.map((m) => [m.from, m.kind])).toEqual([['b', 'voice']])
+    await s.setMode('audio')
+    await s.setMode('off')
+    expect(s.state.messages.map((m) => [m.from, m.kind])).toEqual([['b', 'voice'], ['a', 'voice']])
   })
 
   it('VIDEO: locked from OFF and for a moment after AUDIO; video only while both are on VIDEO', async () => {

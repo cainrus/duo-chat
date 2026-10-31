@@ -9,7 +9,12 @@ import type { Side } from '@shared/types'
 
 export const MAX_MESSAGE_LENGTH = 1000
 
-export type ChatMessage = { id: string; from: Side; text: string; sentAt: number }
+/**
+ * A chat item. `kind: 'voice'` (no text) is a service line: its sender waited in the voice room
+ * and left before the friend joined. It travels and expires exactly like a message.
+ * A plain text message has no `kind` (an incoming `'text'` is accepted too).
+ */
+export type ChatMessage = { id: string; from: Side; text: string; sentAt: number; kind?: 'voice' }
 
 export type StoredMessage = ChatMessage & {
   expiresAt: number
@@ -59,9 +64,16 @@ export class MessageStore {
     const trimmed = text.trim()
     if (trimmed.length === 0) throw new Error('empty message')
     if (trimmed.length > MAX_MESSAGE_LENGTH) throw new Error('message too long')
-    const sentAt = this.now()
-    const msg: ChatMessage = { id: this.newId(), from: this.self, text: trimmed, sentAt }
-    this.messages.push({ ...msg, expiresAt: sentAt + MESSAGE_TTL_MS, pending: true })
+    return this.add({ id: this.newId(), from: this.self, text: trimmed, sentAt: this.now() })
+  }
+
+  /** Adds our voice room service item (we left the room before the friend joined). */
+  composeVoice(): ChatMessage {
+    return this.add({ id: this.newId(), from: this.self, text: '', sentAt: this.now(), kind: 'voice' })
+  }
+
+  private add(msg: ChatMessage): ChatMessage {
+    this.messages.push({ ...msg, expiresAt: msg.sentAt + MESSAGE_TTL_MS, pending: true })
     this.persist()
     this.emit()
     return msg
@@ -74,17 +86,20 @@ export class MessageStore {
   receive(msg: unknown): boolean {
     if (typeof msg !== 'object' || msg === null) return false
     const m = msg as Record<string, unknown>
-    const { id, from, text, sentAt } = m
+    const { id, from, text, sentAt, kind } = m
     if (typeof id !== 'string' || id.length === 0 || id.length > 100) return false
     const other: Side = this.self === 'a' ? 'b' : 'a'
     if (from !== other) return false
-    if (typeof text !== 'string' || text.length < 1 || text.length > MAX_MESSAGE_LENGTH) return false
+    if (kind !== undefined && kind !== 'text' && kind !== 'voice') return false
+    const voice = kind === 'voice'
+    if (typeof text !== 'string') return false
+    if (voice ? text !== '' : text.length < 1 || text.length > MAX_MESSAGE_LENGTH) return false
     if (typeof sentAt !== 'number' || !Number.isFinite(sentAt)) return false
     if (this.messages.some((x) => x.id === id)) return false
     const now = this.now()
     const expiresAt = Math.min(sentAt, now) + MESSAGE_TTL_MS
     if (expiresAt <= now) return false
-    this.messages.push({ id, from: other, text, sentAt, expiresAt, pending: false })
+    this.messages.push({ id, from: other, text, sentAt, ...(voice ? { kind: 'voice' as const } : {}), expiresAt, pending: false })
     this.persist()
     this.emit()
     return true
@@ -168,5 +183,6 @@ function byTime(a: StoredMessage, b: StoredMessage): number {
 }
 
 function toChat(m: StoredMessage): ChatMessage {
-  return { id: m.id, from: m.from, text: m.text, sentAt: m.sentAt }
+  const c: ChatMessage = { id: m.id, from: m.from, text: m.text, sentAt: m.sentAt }
+  return m.kind === 'voice' ? { ...c, kind: 'voice' } : c
 }

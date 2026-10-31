@@ -4,6 +4,7 @@
 // Calls happen right here; the chat stays usable during them.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { MAX_MESSAGE_LENGTH } from '../../messages/store'
+import { hhmm } from '../format'
 import { useDuo } from '../useDuo'
 import ChatBubble from '../components/ChatBubble.vue'
 import EmojiKeyboard from '../components/EmojiKeyboard.vue'
@@ -11,14 +12,10 @@ import CallBar from '../components/CallBar.vue'
 import CallVideo from '../components/CallVideo.vue'
 import IconSmiley from '~icons/ph/smiley-fill'
 import IconSend from '~icons/ph/paper-plane-right-fill'
-import IconPhoneMissed from '~icons/ph/phone-incoming-fill'
 import IconOffline from '~icons/ph/wifi-slash-bold'
-import IconX from '~icons/ph/x-bold'
 import IconBell from '~icons/ph/bell-fill'
 import IconBellOff from '~icons/ph/bell-slash-fill'
 
-defineProps<{ missedCall: boolean }>()
-const emit = defineEmits<{ callBack: []; dismissMissed: [] }>()
 
 const duo = useDuo()
 const s = duo.state
@@ -108,18 +105,14 @@ function toggleBell() {
 
     <main ref="list" class="chat-list" data-test="timeline">
       <div v-if="!s.messages.length" class="chat-empty" aria-hidden="true">👋</div>
-      <ChatBubble v-for="m in s.messages" :key="m.id" :text="m.text" :mine="m.from === s.self" :pending="pending.has(m.id)" />
+      <template v-for="m in s.messages" :key="m.id">
+        <!-- Someone waited in the voice room and left before the other joined: the same line on both sides. -->
+        <div v-if="m.kind === 'voice'" class="service" data-test="voice-item">📞 голосовой · {{ hhmm(m.sentAt) }}</div>
+        <ChatBubble v-else :text="m.text" :mine="m.from === s.self" :pending="pending.has(m.id)" />
+      </template>
     </main>
 
     <footer class="chat-foot van-safe-area-bottom">
-      <div v-if="missedCall" class="missed" data-test="missed-call">
-        <IconPhoneMissed class="missed-icon" />
-        <span class="missed-text">Звала поговорить</span>
-        <van-button round type="success" class="missed-btn" :disabled="view?.call.kind !== 'ready'" @click="emit('callBack')">Перезвонить</van-button>
-        <van-button round class="missed-close" aria-label="Закрыть" @click="emit('dismissMissed')">
-          <IconX class="missed-x" />
-        </van-button>
-      </div>
       <div class="input-row">
         <van-button round class="icon-btn" aria-label="Смайлики" :type="emojiOpen ? 'primary' : 'default'" @click="emojiOpen = !emojiOpen">
           <IconSmiley class="btn-icon" />
@@ -207,40 +200,14 @@ function toggleBell() {
   font-size: 96px;
   opacity: 0.35;
 }
-.missed {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 8px 8px 16px;
-  margin-bottom: 8px;
-  border-radius: 32px;
-  background: #e5f7ef;
-}
-.missed-icon {
-  width: 32px;
-  height: 32px;
-  flex: none;
-  color: var(--van-success-color);
-}
-.missed-text {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--van-font-size-md);
-  color: var(--van-text-color);
-}
-.missed-btn {
-  flex: none;
-}
-.missed-close {
-  flex: none;
-  width: 56px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-}
-.missed-x {
-  width: 22px;
-  height: 22px;
+.service {
+  align-self: center;
+  padding: 4px 14px;
+  border-radius: var(--van-radius-max);
+  background: var(--van-background-2);
+  color: var(--van-text-color-2);
+  font-size: var(--van-font-size-sm);
+  font-variant-numeric: tabular-nums;
 }
 .chat-foot {
   padding: 8px 12px;

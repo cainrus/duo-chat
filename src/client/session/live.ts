@@ -19,7 +19,7 @@ import { deviceConfigStore, type DeviceConfig, type DeviceConfigStore } from '..
 import { idbPersistence } from '../messages/idbPersistence'
 import { MessageStore, MAX_MESSAGE_LENGTH, type MessagePersistence } from '../messages/store'
 import { connectServerLink, type LinkStatus, type ServerLink } from '../net/serverLink'
-import { NOTIFICATION_TAG, parseCallPushUrl } from '../push/notification'
+import { NOTIFICATION_TAG } from '../push/notification'
 import { currentSubscription, notificationsGranted, requestNotifications } from '../push/subscribe'
 import { PeerLink, type DataFrame } from '../rtc/peerLink'
 import type { CallMode, Connection, DuoSession, DuoState, NotificationResult } from './types'
@@ -35,10 +35,6 @@ export type PageEnv = {
   isVisible(): boolean
   /** visibilitychange, pagehide (false) and pageshow. */
   onVisibility(cb: (visible: boolean) => void): () => void
-  /** The query string the app was opened with (once); removes it from the address bar. */
-  takeLaunchSearch(): string
-  /** The service worker forwards a notification click to an open window. */
-  onNotificationClick(cb: (url: string) => void): () => void
   /**
    * The page is going away (pagehide: closed, reloaded, navigated, or frozen into the
    * back/forward cache). Fires before onVisibility(false).
@@ -142,21 +138,6 @@ function browserPage(): PageEnv | null {
         window.removeEventListener('pageshow', onChange)
       }
     },
-    takeLaunchSearch() {
-      const search = location.search
-      if (search && parseCallPushUrl(search)) history.replaceState(history.state, '', location.pathname + location.hash)
-      return search
-    },
-    onNotificationClick(cb) {
-      const sw = navigator.serviceWorker
-      if (!sw) return () => {}
-      const onMessage = (ev: MessageEvent) => {
-        const d = ev.data as { t?: unknown; url?: unknown } | null
-        if (d?.t === 'notification-click' && typeof d.url === 'string') cb(d.url)
-      }
-      sw.addEventListener('message', onMessage)
-      return () => sw.removeEventListener('message', onMessage)
-    },
     onLeave(cb) {
       // pagehide covers unload too; no beforeunload listener: Firefox then skips the bfcache.
       window.addEventListener('pagehide', cb)
@@ -220,7 +201,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   const state = reactive<DuoState>({
     phase: 'setup',
     self: null,
-    missedCall: null,
     connection: 'offline',
     view: null,
     messages: [],
@@ -257,12 +237,8 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   let micFailed = false
   /** getUserMedia for the camera is in flight. */
   let camPending = false
-  /** A call is ringing towards us. */
-  let ringing = false
-  /** We joined the ringing call (so its end is not "missed"). */
-  let responded = false
-  /** Opened from a call notification: decide "missed" on the next view. */
-  let pushedCall: { at: number } | null = null
+  /** We are in the voice room waiting alone (the friend has not joined yet). */
+  let waitingAlone = false
 
   const pageOffs: (() => void)[] = []
 
@@ -285,7 +261,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
   const page = deps.page
   if (page) {
-    pushedCall = parseCallPushUrl(page.takeLaunchSearch())
     pageOffs.push(
       page.onVisibility((visible) => {
         // Voice room: we wait for her only while our app is visible. Hidden (screen off, app
@@ -294,6 +269,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
         if (!visible && rt && state.view?.outgoing && !state.view.inCall) {
           rt.link.send({ t: 'callCancel' })
           endCall()
+          leftUnanswered()
         }
         rt?.link.setVisible(visible)
         if (visible) page.closeNotifications()
@@ -308,11 +284,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       // Close the direct link ourselves, so the friend's channel closes at once instead of
       // looking open until ICE gives up (~15 s). pageshow / visible reconnects.
       page.onLeave(() => rt?.peer.close()),
-      page.onNotificationClick((url) => {
-        const q = url.indexOf('?')
-        const pushed = q >= 0 ? parseCallPushUrl(url.slice(q)) : null
-        if (pushed) pushedCall = pushed
-      }),
     )
   }
 
@@ -518,22 +489,9 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     const prev = state.view
     state.view = view
 
-    // Missed call: it rang towards us and stopped without us joining.
-    if (view.incoming) {
-      if (!prev?.incoming) {
-        state.missedCall = null
-        responded = false
-      }
-      ringing = true
-    } else if (ringing) {
-      if (!view.inCall && !responded) state.missedCall = { at: deps.now() }
-      ringing = false
-    }
-    if (pushedCall) {
-      const p = pushedCall
-      pushedCall = null
-      if (!view.incoming && !view.inCall) state.missedCall = p
-    }
+    // (A view still showing our wait after we left locally is stale: our switch is OFF then.)
+    if (view.outgoing && state.myMode !== 'off') waitingAlone = true
+    if (view.inCall) waitingAlone = false
 
     // The switches and call media follow the server's call state: nothing opens while it
     // rings, the mic once connected.
@@ -549,8 +507,11 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       if (callStream || prev?.inCall) endCall()
       // While she calls us, her switch is on AUDIO.
       state.peerMode = view.incoming ? 'audio' : 'off'
-      // We stopped waiting before she joined (cancel, refused): back to OFF.
-      if (prev?.outgoing && !view.outgoing) endCall()
+      // We stopped waiting before she joined (cancel, a dropped socket): back to OFF.
+      if (prev?.outgoing && !view.outgoing) {
+        endCall()
+        leftUnanswered()
+      }
     }
 
     // The direct link lives while the friend is around.
@@ -564,11 +525,19 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
   const onCallEnded = (reason: CallEndReason) => {
     state.lastCallEnded = reason
-    if (ringing && !responded && reason === 'cancelled') {
-      state.missedCall = { at: deps.now() }
-    }
-    ringing = false
     endCall()
+  }
+
+  /**
+   * We left the voice room before the friend joined: a «📞 голосовой» service item goes into
+   * the chat for both of us, device to device, and lives an hour like any message. Once per
+   * wait, however we left (OFF, hidden, dropped).
+   */
+  const leftUnanswered = () => {
+    if (!waitingAlone || !rt) return
+    waitingAlone = false
+    rt.store.composeVoice()
+    flushOutbox()
   }
 
   const onServer = (msg: ServerToClient) => {
@@ -641,7 +610,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     clearResend()
     sentAt.clear()
     endCall()
-    ringing = false
+    waitingAlone = false
     if (!r) return
     for (const off of r.offs) off()
     r.peer.close()
@@ -844,19 +813,16 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
         endMedia()
         state.myMode = 'off'
         state.videoUnlockAt = null
+        if (v.outgoing && !v.inCall) leftUnanswered()
         return
       }
 
       if (from === 'off') {
         // From OFF only AUDIO: it joins her call, or calls her (not while the button is locked).
         if (mode !== 'audio' || v.inCall || v.outgoing) return
-        if (v.incoming) {
-          responded = true
-          r.link.send({ t: 'callAccept' })
-        } else if (v.peerPaired && v.call.kind === 'ready') {
-          r.link.send({ t: 'call' })
-        } else return
-        state.missedCall = null
+        if (v.incoming) r.link.send({ t: 'callAccept' })
+        else if (v.peerPaired && v.call.kind === 'ready') r.link.send({ t: 'call' })
+        else return
         state.myMode = 'audio'
         state.videoUnlockAt = deps.now() + VIDEO_UNLOCK_MS
         return
@@ -871,9 +837,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
     dismissCallEnded() {
       state.lastCallEnded = null
-    },
-    dismissMissedCall() {
-      state.missedCall = null
     },
     dismissError() {
       setError(null)

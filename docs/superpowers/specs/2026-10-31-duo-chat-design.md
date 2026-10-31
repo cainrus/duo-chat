@@ -202,8 +202,13 @@ budget, and never reveal to the sender whether the friend is in the app.
   caller waits (app visible, socket open). The caller leaves by going OFF;
   hiding or closing the app, or a dropped socket, also ends it.
 - No push goes back to the caller ("X answered" is out of scope).
-- A callee who opens the app after the caller left (e.g. from a stale push)
-  lands in the chat with a "missed call" marker and a call-back button.
+- **Voice line instead of a missed-call card** (owner, 2026-10-31): when I
+  leave the room before the friend joined (OFF, app hidden, dropped), my device
+  composes a chat item `{ kind: 'voice' }` with no text and sends it
+  device-to-device like any message (outbox, acks, 1-hour life). Both sides show
+  it as a centred service line «📞 голосовой · HH:MM», with no names and no
+  button. The server never learns about it. A call notification just opens the
+  chat.
 - Leaving before the friend joined counts as an attempt, so leaving is not a
   way around the rules. There is no decline and no "busy".
 - Both sides enter at the same moment → the calls merge into one connected

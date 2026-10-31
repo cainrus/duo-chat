@@ -51,7 +51,6 @@ export type FakeDev = {
   setPingView(kind: 'ready' | 'cooldown' | 'exhausted'): void
   setError(text: string | null): void
   /** The app was opened from a call notification after the call was already gone. */
-  missedFromPush(): void
 }
 
 export type FakeSession = DuoSession & { dev: FakeDev }
@@ -75,7 +74,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   const state = reactive<DuoState>({
     phase: 'setup',
     self: null,
-    missedCall: null,
     connection: 'online',
     view: null,
     messages: [],
@@ -105,6 +103,11 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     const msg: ChatMessage = { id: `m${++idSeq}`, from, text, sentAt: now() }
     state.messages.push(msg)
     return msg
+  }
+  const addVoice = (from: Side) => {
+    const msg: ChatMessage = { id: `m${++idSeq}`, from, text: '', sentAt: now(), kind: 'voice' }
+    state.messages.push(msg)
+    if (from === mySide && !state.directOpen) state.pendingIds.push(msg.id)
   }
 
   // --- media: animated canvases stand in for cameras (no permission prompts in dev) ---
@@ -232,6 +235,8 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
           v.outgoing = false
           state.lastCallEnded = 'cancelled'
           finishAttempt()
+          // We left the voice room before she joined: the service line, for both of us.
+          addVoice(mySide)
         }
         endCall()
         return
@@ -239,11 +244,9 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       if (from === 'off') {
         if (mode !== 'audio' || v.inCall || v.outgoing) return
         if (v.incoming) {
-          state.missedCall = null
           connect()
         } else if (v.peerPaired && v.call.kind === 'ready') {
           // Voice room: we wait for her as long as we like; no ring timeout.
-          state.missedCall = null
           callAttempts++
           v.outgoing = true
         } else return
@@ -260,9 +263,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       state.lastCallEnded = null
     },
 
-    dismissMissedCall() {
-      state.missedCall = null
-    },
 
     dismissError() {
       state.error = null
@@ -282,9 +282,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     }, CALL_COOLDOWN_MS)
   }
 
-  const missed = () => {
-    state.missedCall = { at: now() }
-  }
 
   const end = (reason: CallEndReason) => {
     state.lastCallEnded = reason
@@ -354,17 +351,17 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     incoming() {
       const v = view()
       if (v.inCall || v.outgoing) return
-      state.missedCall = null
       v.incoming = true
       state.peerMode = 'audio'
     },
     peerCancels() {
       const v = view()
       if (!v.incoming) return
-      missed()
       v.incoming = false
       state.peerMode = 'off'
       end('cancelled')
+      // She left the voice room before we joined: her device sends the service line.
+      addVoice(peerSide)
     },
     peerAccepts() {
       const v = view()
@@ -401,12 +398,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     },
     setError(text) {
       state.error = text
-    },
-    missedFromPush() {
-      const v = view()
-      v.incoming = false
-      state.peerMode = 'off'
-      missed()
     },
   }
   session.dev = dev

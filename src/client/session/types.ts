@@ -21,12 +21,6 @@ export type DuoState = {
   phase: 'setup' | 'ready'
   /** This device's slot, known locally from pairing (does not wait for the server). */
   self: Side | null
-  /**
-   * A call towards us ended without being answered (the friend gave up, it timed out,
-   * or the app was opened from a call notification after the call was gone).
-   * Cleared by dismissMissedCall() or when a new call starts.
-   */
-  missedCall: { at: number } | null
   connection: Connection
   /**
    * Server-computed room state (buttons, call state). Null before first connect. It carries
@@ -106,6 +100,5 @@ export interface DuoSession {
 
   // --- clearing one-shot notes (the UI never writes into state) ---
   dismissCallEnded(): void
-  dismissMissedCall(): void
   dismissError(): void
 }

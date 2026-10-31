@@ -25,7 +25,7 @@ export const MESSAGE_TTL_MS = 60 * 60_000
  * How long an invitation push (ping, message, voice room entry) stays deliverable and valid.
  * Web Push TTL for all of them, and the notification's `data.expiresAt` for ping and message.
  * A call (voice room) can wait as long as the caller stays, so its notification has no expiry
- * of its own; a click after the caller left shows the missed-call card.
+ * of its own. A click just opens the chat.
  */
 export const INVITE_TTL_MS = MESSAGE_TTL_MS
 
