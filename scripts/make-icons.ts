@@ -11,7 +11,7 @@ import { deflateSync } from 'node:zlib'
 
 type RGB = [number, number, number]
 
-const BACKGROUND: RGB = [0xf4, 0xf1, 0xfb]
+const BACKGROUND: RGB = [0xff, 0xf7, 0xee]
 const LEFT: RGB = [0xff, 0x8f, 0xb1] // pink friend
 const RIGHT: RGB = [0x6c, 0xc4, 0xd6] // teal friend
 const FACE: RGB = [0x3a, 0x33, 0x4f]

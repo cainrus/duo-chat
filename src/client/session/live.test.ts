@@ -1,0 +1,774 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MESSAGE_TTL_MS } from '@shared/constants'
+import type { ClientToServer, PushSubscriptionJSONLike, RoomView, ServerToClient } from '@shared/protocol'
+import type { Side } from '@shared/types'
+import { derivePairKeys, generatePairSecret, secretFromHash } from '../crypto/pair'
+import type { DeviceConfig, DeviceConfigStore } from '../device/config'
+import type { MessagePersistence, StoredMessage } from '../messages/store'
+import type { LinkStatus, ServerLink } from '../net/serverLink'
+import type { DataFrame } from '../rtc/peerLink'
+import { createLiveSession, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
+import type { Profile } from './types'
+
+// ---------- fakes ----------
+
+type Out = Exclude<ClientToServer, { t: 'hello' }>
+
+class FakeLink implements ServerLink {
+  status: LinkStatus = 'connecting'
+  readonly sent: Out[] = []
+  visible: boolean[] = []
+  closed = false
+  private msgCbs = new Set<(m: ServerToClient) => void>()
+  private statusCbs = new Set<(s: LinkStatus) => void>()
+  constructor(readonly opts: { wsBase: string; roomId: string; deviceToken: string }) {}
+  send(m: Out) {
+    this.sent.push(m)
+  }
+  onMessage(cb: (m: ServerToClient) => void) {
+    this.msgCbs.add(cb)
+    return () => this.msgCbs.delete(cb)
+  }
+  onStatus(cb: (s: LinkStatus) => void) {
+    this.statusCbs.add(cb)
+    return () => this.statusCbs.delete(cb)
+  }
+  setVisible(v: boolean) {
+    this.visible.push(v)
+  }
+  close() {
+    this.closed = true
+  }
+  deliver(m: ServerToClient) {
+    for (const cb of [...this.msgCbs]) cb(m)
+  }
+  setStatus(s: LinkStatus) {
+    this.status = s
+    for (const cb of [...this.statusCbs]) cb(s)
+  }
+  sentOf<T extends Out['t']>(t: T) {
+    return this.sent.filter((m) => m.t === t)
+  }
+}
+
+class FakePeer implements PeerLinkLike {
+  dataOpen = false
+  connects = 0
+  closes = 0
+  /** Frames handed to the data channel. */
+  readonly out: DataFrame[] = []
+  localStreams: (MediaStream | null)[] = []
+  /** When set, sendData fails after this many frames. */
+  capacity = Infinity
+  private dataCbs = new Set<(f: DataFrame) => void>()
+  private openCbs = new Set<(o: boolean) => void>()
+  private remoteCbs = new Set<(s: MediaStream | null) => void>()
+  constructor(readonly opts: { self: Side; getIceServers: () => Promise<RTCIceServer[]> }) {}
+  connect() {
+    this.connects++
+  }
+  close() {
+    this.closes++
+    this.setOpen(false)
+  }
+  sendData(f: DataFrame) {
+    if (!this.dataOpen || this.out.length >= this.capacity) return false
+    this.out.push(structuredClone(f))
+    return true
+  }
+  onData(cb: (f: DataFrame) => void) {
+    this.dataCbs.add(cb)
+    return () => this.dataCbs.delete(cb)
+  }
+  onDataOpen(cb: (o: boolean) => void) {
+    this.openCbs.add(cb)
+    return () => this.openCbs.delete(cb)
+  }
+  setLocalStream(s: MediaStream | null) {
+    this.localStreams.push(s)
+  }
+  onRemoteStream(cb: (s: MediaStream | null) => void) {
+    this.remoteCbs.add(cb)
+    return () => this.remoteCbs.delete(cb)
+  }
+  setOpen(o: boolean) {
+    if (this.dataOpen === o) return
+    this.dataOpen = o
+    for (const cb of [...this.openCbs]) cb(o)
+  }
+  receive(f: DataFrame) {
+    for (const cb of [...this.dataCbs]) cb(f)
+  }
+  remote(s: MediaStream | null) {
+    for (const cb of [...this.remoteCbs]) cb(s)
+  }
+}
+
+class Track {
+  enabled = true
+  readyState: 'live' | 'ended' = 'live'
+  constructor(readonly kind: 'audio' | 'video') {}
+  stop() {
+    this.readyState = 'ended'
+  }
+}
+
+class Stream {
+  private tracks: Track[]
+  constructor(tracks: Track[]) {
+    this.tracks = tracks
+  }
+  getTracks() {
+    return [...this.tracks]
+  }
+  getAudioTracks() {
+    return this.tracks.filter((t) => t.kind === 'audio')
+  }
+  getVideoTracks() {
+    return this.tracks.filter((t) => t.kind === 'video')
+  }
+  addTrack(t: Track) {
+    this.tracks.push(t)
+  }
+  removeTrack(t: Track) {
+    this.tracks = this.tracks.filter((x) => x !== t)
+  }
+}
+
+const memoryConfig = (initial: DeviceConfig | null = null) => {
+  let value = initial ? structuredClone(initial) : null
+  const store: DeviceConfigStore & { value: () => DeviceConfig | null } = {
+    load: async () => (value ? structuredClone(value) : null),
+    save: async (c) => {
+      value = structuredClone(c)
+    },
+    clear: async () => {
+      value = null
+    },
+    value: () => value,
+  }
+  return store
+}
+
+const memoryMessages = (initial: StoredMessage[] = []): MessagePersistence & { saved: StoredMessage[] } => {
+  const p = {
+    saved: structuredClone(initial),
+    load: async () => structuredClone(p.saved),
+    save: async (all: StoredMessage[]) => {
+      p.saved = structuredClone(all)
+    },
+  }
+  return p
+}
+
+const ME: Profile = { name: 'Маша', avatar: 'bunny' }
+const FRIEND: Profile = { name: 'Соня', avatar: 'fox' }
+const T0 = 1_800_000_000_000
+
+const view = (over: Partial<RoomView> = {}): RoomView => ({
+  self: 'a',
+  peerPaired: true,
+  peerPresent: true,
+  call: { kind: 'ready' },
+  ping: { kind: 'ready' },
+  incoming: null,
+  outgoing: null,
+  inCall: null,
+  ...over,
+})
+
+type Harness = {
+  session: LiveSession
+  links: FakeLink[]
+  peers: FakePeer[]
+  config: ReturnType<typeof memoryConfig>
+  messages: ReturnType<typeof memoryMessages>
+  fetchCalls: { url: string; init?: RequestInit }[]
+  media: { constraints: MediaStreamConstraints[]; streams: Stream[]; fail: Error | null }
+  page: { visible: boolean; emit: (v: boolean) => void; search: string; click: (url: string) => void }
+  push: { subs: PushSubscriptionJSONLike[] }
+  clock: { now: number }
+  link: () => FakeLink
+  peer: () => FakePeer
+}
+
+async function paired(side: Side = 'a') {
+  const secret = generatePairSecret()
+  const { encodeSecret } = await import('../crypto/pair')
+  const config: DeviceConfig = { secret: encodeSecret(secret), side, deviceToken: 'tok-' + side, me: ME, peer: null }
+  return { secret, config }
+}
+
+function harness(opts: {
+  config?: DeviceConfig | null
+  messages?: StoredMessage[]
+  search?: string
+  fetch?: (url: string, init?: RequestInit) => Response
+  currentSub?: PushSubscriptionJSONLike | null
+} = {}): Harness {
+  const links: FakeLink[] = []
+  const peers: FakePeer[] = []
+  const config = memoryConfig(opts.config ?? null)
+  const messages = memoryMessages(opts.messages)
+  const fetchCalls: Harness['fetchCalls'] = []
+  const media: Harness['media'] = { constraints: [], streams: [], fail: null }
+  const clock = { now: T0 }
+  const visCbs = new Set<(v: boolean) => void>()
+  const clickCbs = new Set<(u: string) => void>()
+  const pageState = {
+    visible: true,
+    search: opts.search ?? '',
+    emit: (v: boolean) => {
+      pageState.visible = v
+      for (const cb of visCbs) cb(v)
+    },
+    click: (u: string) => {
+      for (const cb of clickCbs) cb(u)
+    },
+  }
+  const page: PageEnv = {
+    isVisible: () => pageState.visible,
+    onVisibility: (cb) => {
+      visCbs.add(cb)
+      return () => visCbs.delete(cb)
+    },
+    takeLaunchSearch: () => {
+      const s = pageState.search
+      pageState.search = ''
+      return s
+    },
+    onNotificationClick: (cb) => {
+      clickCbs.add(cb)
+      return () => clickCbs.delete(cb)
+    },
+  }
+  const push = { subs: [] as PushSubscriptionJSONLike[] }
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    fetchCalls.push({ url, init })
+    if (opts.fetch) return opts.fetch(url, init)
+    if (url.endsWith('/claim')) {
+      const side = JSON.parse(String(init?.body)).side as Side
+      return new Response(JSON.stringify({ side, deviceToken: 'token-' + side }), { status: 200 })
+    }
+    if (url.endsWith('/ice')) return new Response(JSON.stringify({ iceServers: [{ urls: 'turn:x' }] }), { status: 200 })
+    return new Response('nope', { status: 404 })
+  }) as typeof fetch
+
+  const deps: Partial<LiveDeps> = {
+    apiBase: 'https://duo.test',
+    wsBase: 'wss://duo.test',
+    origin: 'https://duo.test',
+    fetch: fetcher,
+    config,
+    messages,
+    connectServerLink: (o) => {
+      const l = new FakeLink(o)
+      links.push(l)
+      return l
+    },
+    createPeerLink: (o) => {
+      const p = new FakePeer(o)
+      peers.push(p)
+      return p
+    },
+    getUserMedia: async (c) => {
+      media.constraints.push(c)
+      if (media.fail) throw media.fail
+      const tracks: Track[] = []
+      if (c.audio) tracks.push(new Track('audio'))
+      if (c.video) tracks.push(new Track('video'))
+      const s = new Stream(tracks)
+      media.streams.push(s)
+      return s as unknown as MediaStream
+    },
+    page,
+    push: {
+      request: async (onSub) => {
+        const sub = { endpoint: 'https://push.test/1', keys: { p256dh: 'p', auth: 'a' } }
+        push.subs.push(sub)
+        onSub(sub)
+        return 'granted'
+      },
+      current: async () => opts.currentSub ?? null,
+    },
+    now: () => clock.now,
+  }
+  const session = createLiveSession({ deps })
+  return {
+    session,
+    links,
+    peers,
+    config,
+    messages,
+    fetchCalls,
+    media,
+    page: pageState,
+    push,
+    clock,
+    link: () => links.at(-1)!,
+    peer: () => peers.at(-1)!,
+  }
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+let h: Harness | null = null
+afterEach(() => {
+  h?.session.dispose()
+  h = null
+  vi.useRealTimers()
+})
+
+// ---------- tests ----------
+
+describe('live session: pairing', () => {
+  it('starts in setup when the device is not paired', async () => {
+    h = harness()
+    await h.session.ready
+    expect(h.session.state.phase).toBe('setup')
+    expect(h.links).toHaveLength(0)
+  })
+
+  it('createPair claims slot a with the admin secret, saves the config and returns the link', async () => {
+    h = harness()
+    const { link } = await h.session.createPair({ adminSecret: 'adm1n', me: ME })
+    const claim = h.fetchCalls.find((c) => c.url.endsWith('/claim'))!
+    expect(claim.init?.method).toBe('POST')
+    expect(JSON.parse(String(claim.init?.body))).toEqual({ side: 'a' })
+    expect((claim.init?.headers as Record<string, string>).Authorization).toBe('Bearer adm1n')
+
+    expect(link.startsWith('https://duo.test/#pair=')).toBe(true)
+    const secret = secretFromHash(link.slice(link.indexOf('#')))!
+    const { roomId } = await derivePairKeys(secret)
+    expect(claim.url).toBe(`https://duo.test/api/rooms/${roomId}/claim`)
+    // The secret never goes to the server.
+    expect(claim.url + String(claim.init?.body)).not.toContain(link.split('#pair=')[1])
+
+    expect(h.config.value()).toMatchObject({ side: 'a', deviceToken: 'token-a', me: ME, peer: null })
+    expect(h.session.state.phase).toBe('ready')
+    expect(h.session.state.self).toBe('a')
+    expect(h.session.state.me).toEqual(ME)
+    expect(h.link().opts).toEqual({ wsBase: 'wss://duo.test', roomId, deviceToken: 'token-a' })
+    expect(h.link().visible).toEqual([true])
+  })
+
+  it('joinPair claims slot b without auth', async () => {
+    h = harness()
+    const secret = generatePairSecret()
+    await h.session.joinPair({ secret, me: ME })
+    const claim = h.fetchCalls.find((c) => c.url.endsWith('/claim'))!
+    expect(JSON.parse(String(claim.init?.body))).toEqual({ side: 'b' })
+    expect((claim.init?.headers as Record<string, string>).Authorization).toBeUndefined()
+    expect(h.session.state.self).toBe('b')
+    expect(h.peer().opts.self).toBe('b')
+  })
+
+  it('pairing errors are thrown in Russian and leave the device in setup', async () => {
+    h = harness({ fetch: () => new Response('full', { status: 409 }) })
+    await expect(h.session.joinPair({ secret: generatePairSecret(), me: ME })).rejects.toThrow(/уже использована/)
+    expect(h.session.state.phase).toBe('setup')
+    expect(h.config.value()).toBeNull()
+  })
+
+  it('a stored pairing starts the session on load', async () => {
+    const { config } = await paired('b')
+    h = harness({ config: { ...config, peer: FRIEND } })
+    await h.session.ready
+    expect(h.session.state).toMatchObject({ phase: 'ready', self: 'b', me: ME, peer: FRIEND })
+    expect(h.link().opts.deviceToken).toBe('tok-b')
+  })
+
+  it('a revoked device goes back to setup and forgets the pairing', async () => {
+    const { config } = await paired()
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'error', code: 'unauthorized' })
+    await flush()
+    expect(h.session.state.phase).toBe('setup')
+    expect(h.session.state.error).toMatch(/отключено/)
+    expect(h.link().closed).toBe(true)
+    expect(h.config.value()).toBeNull()
+  })
+})
+
+describe('live session: server link', () => {
+  let config: DeviceConfig
+  beforeEach(async () => {
+    config = (await paired()).config
+  })
+
+  it('maps link status to connection and views to state', async () => {
+    h = harness({ config })
+    await h.session.ready
+    expect(h.session.state.connection).toBe('connecting')
+    h.link().setStatus('open')
+    expect(h.session.state.connection).toBe('online')
+    const v = view({ ping: { kind: 'exhausted', until: T0 + 5 } })
+    h.link().deliver({ t: 'view', view: v })
+    expect(h.session.state.view).toEqual(v)
+    h.link().setStatus('closed')
+    expect(h.session.state.connection).toBe('offline')
+  })
+
+  it('reports visibility changes', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.page.emit(false)
+    h.page.emit(true)
+    expect(h.link().visible).toEqual([true, false, true])
+  })
+
+  it('nudge sets nudgeAt; ping sends a ping frame', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.clock.now = T0 + 42
+    h.link().deliver({ t: 'nudge' })
+    expect(h.session.state.nudgeAt).toBe(T0 + 42)
+    h.session.ping()
+    expect(h.link().sentOf('ping')).toHaveLength(1)
+  })
+
+  it('connects the direct link while the friend is present and closes it when she is gone', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view({ peerPresent: false }) })
+    expect(h.peer().connects).toBe(0)
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.peer().connects).toBe(1)
+    h.peer().setOpen(true)
+    expect(h.session.state.directOpen).toBe(true)
+    h.link().deliver({ t: 'view', view: view({ peerPresent: false }) })
+    expect(h.peer().closes).toBe(1)
+    expect(h.session.state.directOpen).toBe(false)
+    // Not closed again while she stays away.
+    h.link().deliver({ t: 'view', view: view({ peerPresent: false }) })
+    expect(h.peer().closes).toBe(1)
+  })
+
+  it('does not connect to a friend who has not paired yet', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view({ peerPaired: false, peerPresent: false }) })
+    expect(h.peer().connects).toBe(0)
+  })
+
+  it('fetches ICE servers with the device token', async () => {
+    h = harness({ config })
+    await h.session.ready
+    const servers = await h.peer().opts.getIceServers()
+    expect(servers).toEqual([{ urls: 'turn:x' }])
+    const call = h.fetchCalls.find((c) => c.url.endsWith('/ice'))!
+    expect((call.init?.headers as Record<string, string>).Authorization).toBe('Bearer tok-a')
+  })
+
+  it('re-sends an existing push subscription on start; enableNotifications sends a new one', async () => {
+    const sub = { endpoint: 'https://push.test/old', keys: { p256dh: 'p', auth: 'a' } }
+    h = harness({ config, currentSub: sub })
+    await h.session.ready
+    await flush()
+    expect(h.link().sentOf('pushSubscribe')).toEqual([{ t: 'pushSubscribe', sub }])
+    expect(await h.session.enableNotifications()).toBe('granted')
+    expect(h.link().sentOf('pushSubscribe')).toHaveLength(2)
+  })
+
+  it('a subscription made before pairing is sent once the link exists', async () => {
+    h = harness()
+    await h.session.ready
+    expect(await h.session.enableNotifications()).toBe('granted')
+    await h.session.joinPair({ secret: generatePairSecret(), me: ME })
+    expect(h.link().sentOf('pushSubscribe')).toEqual([{ t: 'pushSubscribe', sub: h.push.subs[0] }])
+  })
+})
+
+describe('live session: messages', () => {
+  let config: DeviceConfig
+  beforeEach(async () => {
+    config = (await paired()).config
+  })
+
+  it('queues while the friend is away and flushes the outbox when the data channel opens', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.session.sendText(' привет ')
+    h.clock.now++
+    h.session.sendText('🦄')
+    expect(h.session.state.messages.map((m) => m.text)).toEqual(['привет', '🦄'])
+    expect(h.peer().out).toEqual([])
+    expect(h.link().sentOf('replied')).toHaveLength(2)
+
+    h.peer().setOpen(true)
+    expect(h.peer().out[0]).toEqual({ t: 'profile', p: ME })
+    expect(h.peer().out.slice(1).map((f) => f.t === 'msg' && f.m.text)).toEqual(['привет', '🦄'])
+    // Marked sent: reopening does not resend.
+    h.peer().setOpen(false)
+    h.peer().setOpen(true)
+    expect(h.peer().out.filter((f) => f.t === 'msg')).toHaveLength(2)
+  })
+
+  it('keeps what did not fit for the next open', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.session.sendText('one')
+    h.clock.now++
+    h.session.sendText('two')
+    h.peer().capacity = 2 // profile + one message
+    h.peer().setOpen(true)
+    expect(h.peer().out.filter((f) => f.t === 'msg')).toHaveLength(1)
+    h.peer().capacity = Infinity
+    h.peer().setOpen(false)
+    h.peer().setOpen(true)
+    expect(h.peer().out.filter((f) => f.t === 'msg').map((f) => f.t === 'msg' && f.m.text)).toEqual(['one', 'two'])
+  })
+
+  it('sends at once when the channel is open, and always tells the server "replied"', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.peer().setOpen(true)
+    h.session.sendText('hi')
+    expect(h.peer().out.at(-1)).toMatchObject({ t: 'msg', m: { text: 'hi', from: 'a', sentAt: T0 } })
+    expect(h.link().sentOf('replied')).toHaveLength(1)
+  })
+
+  it('ignores empty text and reports too long text', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.session.sendText('   ')
+    h.session.sendText('x'.repeat(5000))
+    expect(h.session.state.messages).toEqual([])
+    expect(h.link().sentOf('replied')).toHaveLength(0)
+    expect(h.session.state.error).toMatch(/длинное/)
+    h.session.dismissError()
+    expect(h.session.state.error).toBeNull()
+  })
+
+  it('receives messages and the friend profile (saved to the device config)', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.peer().receive({ t: 'msg', m: { id: 'm1', from: 'b', text: 'йо', sentAt: T0 - 1000 } })
+    h.peer().receive({ t: 'msg', m: { id: 'm2', from: 'a', text: 'spoof', sentAt: T0 } })
+    expect(h.session.state.messages.map((m) => m.text)).toEqual(['йо'])
+    h.peer().receive({ t: 'profile', p: FRIEND })
+    expect(h.session.state.peer).toEqual(FRIEND)
+    await flush()
+    expect(h.config.value()?.peer).toEqual(FRIEND)
+    h.peer().receive({ t: 'profile', p: { name: 'x', avatar: 'dragon' } as unknown as Profile })
+    expect(h.session.state.peer).toEqual(FRIEND)
+  })
+
+  it('removes a message when its hour is over', async () => {
+    vi.useFakeTimers({ now: T0 })
+    h = harness({ config })
+    h.clock.now = T0
+    await h.session.ready
+    h.session.sendText('скоро исчезнет')
+    expect(h.session.state.messages).toHaveLength(1)
+    h.clock.now = T0 + MESSAGE_TTL_MS
+    vi.advanceTimersByTime(MESSAGE_TTL_MS)
+    expect(h.session.state.messages).toEqual([])
+  })
+
+  it('loads unexpired messages from the device', async () => {
+    const stored: StoredMessage[] = [
+      { id: 'old', from: 'b', text: 'old', sentAt: T0 - MESSAGE_TTL_MS - 1, expiresAt: T0 - 1, pending: false },
+      { id: 'new', from: 'b', text: 'new', sentAt: T0 - 10, expiresAt: T0 - 10 + MESSAGE_TTL_MS, pending: false },
+    ]
+    h = harness({ config, messages: stored })
+    await h.session.ready
+    expect(h.session.state.messages.map((m) => m.id)).toEqual(['new'])
+  })
+})
+
+describe('live session: calls', () => {
+  let config: DeviceConfig
+  beforeEach(async () => {
+    config = (await paired()).config
+  })
+
+  async function ready() {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view() })
+    return h
+  }
+
+  it('caller: media first, then the call; attached when connected; tracks stop when it ends', async () => {
+    const h = await ready()
+    await h.session.startCall('video')
+    expect(h.media.constraints[0]).toMatchObject({ audio: expect.anything(), video: { facingMode: 'user' } })
+    expect(h.link().sentOf('call')).toEqual([{ t: 'call', kind: 'video' }])
+    const stream = h.media.streams[0]!
+    expect(h.session.state.media.local).toBe(stream)
+    expect(h.session.state.media).toMatchObject({ micOn: true, camOn: true })
+    // Not sent to the friend before she accepts.
+    expect(h.peer().localStreams).toEqual([])
+
+    h.link().deliver({ t: 'view', view: view({ outgoing: { kind: 'video', until: T0 + 1 } }) })
+    h.link().deliver({ t: 'view', view: view({ inCall: { kind: 'video' } }) })
+    expect(h.peer().localStreams).toEqual([stream])
+
+    h.link().deliver({ t: 'callEnded', reason: 'hangup' })
+    expect(stream.getTracks().every((t) => t.readyState === 'ended')).toBe(true)
+    expect(h.peer().localStreams.at(-1)).toBeNull()
+    expect(h.session.state.media.local).toBeNull()
+    expect(h.session.state.lastCallEnded).toBe('hangup')
+    h.session.dismissCallEnded()
+    expect(h.session.state.lastCallEnded).toBeNull()
+  })
+
+  it('voice call asks for audio only', async () => {
+    const h = await ready()
+    await h.session.startCall('voice')
+    expect(h.media.constraints[0]!.video).toBe(false)
+    expect(h.session.state.media.camOn).toBe(false)
+  })
+
+  it('callee: accept gets media and sends callAccept; hangUp stops tracks', async () => {
+    const h = await ready()
+    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'voice' } }) })
+    await h.session.acceptCall()
+    expect(h.link().sentOf('callAccept')).toHaveLength(1)
+    const stream = h.media.streams[0]!
+    h.link().deliver({ t: 'view', view: view({ inCall: { kind: 'voice' } }) })
+    expect(h.peer().localStreams).toEqual([stream])
+    expect(h.session.state.missedCall).toBeNull()
+
+    h.session.hangUp()
+    expect(h.link().sentOf('callEnd')).toHaveLength(1)
+    expect(stream.getTracks().every((t) => t.readyState === 'ended')).toBe(true)
+    h.link().deliver({ t: 'callEnded', reason: 'hangup' })
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.session.state.missedCall).toBeNull()
+  })
+
+  it('cancel stops the caller tracks', async () => {
+    const h = await ready()
+    await h.session.startCall('voice')
+    h.session.cancelCall()
+    expect(h.link().sentOf('callCancel')).toHaveLength(1)
+    expect(h.media.streams[0]!.getTracks()[0]!.readyState).toBe('ended')
+  })
+
+  it('a refused call releases the mic', async () => {
+    const h = await ready()
+    await h.session.startCall('voice')
+    h.link().deliver({ t: 'error', code: 'not-allowed' })
+    expect(h.media.streams[0]!.getTracks()[0]!.readyState).toBe('ended')
+    expect(h.session.state.error).toBeTruthy()
+  })
+
+  it('a call that ends without a callEnded frame (socket dropped) still stops tracks', async () => {
+    const h = await ready()
+    await h.session.startCall('voice')
+    h.link().deliver({ t: 'view', view: view({ outgoing: { kind: 'voice', until: T0 + 1 } }) })
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.media.streams[0]!.getTracks()[0]!.readyState).toBe('ended')
+  })
+
+  it('does not start a call while the button is locked', async () => {
+    const h = await ready()
+    h.link().deliver({ t: 'view', view: view({ call: { kind: 'cooldown', until: T0 + 1 } }) })
+    await h.session.startCall('voice')
+    expect(h.media.constraints).toEqual([])
+    expect(h.link().sentOf('call')).toEqual([])
+  })
+
+  it('mic denied: a short Russian error and no call', async () => {
+    const h = await ready()
+    h.media.fail = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    await h.session.startCall('voice')
+    expect(h.session.state.error).toMatch(/Нет доступа/)
+    expect(h.link().sentOf('call')).toEqual([])
+  })
+
+  it('mic and camera toggles; camera in a voice call adds a video track', async () => {
+    const h = await ready()
+    await h.session.startCall('voice')
+    h.link().deliver({ t: 'view', view: view({ inCall: { kind: 'voice' } }) })
+    const stream = h.media.streams[0]!
+    h.session.setMic(false)
+    expect(stream.getAudioTracks()[0]!.enabled).toBe(false)
+    expect(h.session.state.media.micOn).toBe(false)
+
+    await h.session.setCamera(true)
+    expect(h.media.constraints[1]).toMatchObject({ audio: false, video: { facingMode: 'user' } })
+    expect(stream.getVideoTracks()).toHaveLength(1)
+    expect(h.session.state.media.camOn).toBe(true)
+    expect(h.peer().localStreams.at(-1)).toBe(stream)
+
+    const cam = stream.getVideoTracks()[0]!
+    await h.session.setCamera(false)
+    expect(cam.readyState).toBe('ended')
+    expect(stream.getVideoTracks()).toHaveLength(0)
+    expect(h.session.state.media.camOn).toBe(false)
+  })
+
+  it('remote stream goes to state', async () => {
+    const h = await ready()
+    const remote = new Stream([new Track('audio')]) as unknown as MediaStream
+    h.peer().remote(remote)
+    expect(h.session.state.media.remote).toBe(remote)
+  })
+})
+
+describe('live session: missed calls', () => {
+  let config: DeviceConfig
+  beforeEach(async () => {
+    config = (await paired()).config
+  })
+
+  it('a ringing call the friend cancelled is missed; a new call clears it', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'video' } }) })
+    h.clock.now = T0 + 7
+    h.link().deliver({ t: 'callEnded', reason: 'cancelled' })
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.session.state.missedCall).toEqual({ kind: 'video', at: T0 + 7 })
+    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'voice' } }) })
+    expect(h.session.state.missedCall).toBeNull()
+  })
+
+  it('a declined call is not missed', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'voice' } }) })
+    h.session.declineCall()
+    expect(h.link().sentOf('callDecline')).toHaveLength(1)
+    h.link().deliver({ t: 'callEnded', reason: 'declined' })
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.session.state.missedCall).toBeNull()
+  })
+
+  it('opened from a call notification after the call is gone: missed', async () => {
+    h = harness({ config, search: `?from=call-push&kind=voice&at=${T0 - 5000}` })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.session.state.missedCall).toEqual({ kind: 'voice', at: T0 - 5000 })
+    h.session.dismissMissedCall()
+    expect(h.session.state.missedCall).toBeNull()
+  })
+
+  it('opened from a call notification while it still rings: not missed', async () => {
+    h = harness({ config, search: `?from=call-push&kind=voice&at=${T0}` })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'voice' } }) })
+    expect(h.session.state.missedCall).toBeNull()
+  })
+
+  it('a notification click forwarded to an open window is checked on the next view', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.page.click(`/?from=call-push&kind=video&at=${T0}`)
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.session.state.missedCall).toEqual({ kind: 'video', at: T0 })
+  })
+
+  it('starting a call clears a missed call', async () => {
+    h = harness({ config, search: `?from=call-push&kind=voice&at=${T0}` })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view() })
+    await h.session.startCall('voice')
+    expect(h.session.state.missedCall).toBeNull()
+  })
+})
