@@ -15,18 +15,17 @@ export type NotificationData = { url: string }
 export const CALL_PUSH_PARAM = 'from'
 export const CALL_PUSH_VALUE = 'call-push'
 
-export function callPushUrl(kind: 'voice' | 'video', at: number): string {
-  return `/?${CALL_PUSH_PARAM}=${CALL_PUSH_VALUE}&kind=${kind}&at=${at}`
+export function callPushUrl(at: number): string {
+  return `/?${CALL_PUSH_PARAM}=${CALL_PUSH_VALUE}&at=${at}`
 }
 
-/** Parses `?from=call-push&kind=..&at=..`; null for anything else. */
-export function parseCallPushUrl(search: string): { kind: 'voice' | 'video'; at: number } | null {
+/** Parses `?from=call-push&at=..`; null for anything else. */
+export function parseCallPushUrl(search: string): { at: number } | null {
   const q = new URLSearchParams(search)
   if (q.get(CALL_PUSH_PARAM) !== CALL_PUSH_VALUE) return null
-  const kind = q.get('kind')
   const at = Number(q.get('at'))
-  if ((kind !== 'voice' && kind !== 'video') || !Number.isFinite(at) || at <= 0) return null
-  return { kind, at }
+  if (!Number.isFinite(at) || at <= 0) return null
+  return { at }
 }
 
 export function parsePushPayload(text: string | null): PushPayload | null {
@@ -40,7 +39,8 @@ export function parsePushPayload(text: string | null): PushPayload | null {
   if (typeof v !== 'object' || v === null) return null
   const o = v as Record<string, unknown>
   if (o.kind === 'ping') return { kind: 'ping' }
-  if (o.kind === 'call' && (o.callKind === 'voice' || o.callKind === 'video')) return { kind: 'call', callKind: o.callKind }
+  // Calls are always voice; an older server's `callKind` is ignored.
+  if (o.kind === 'call') return { kind: 'call' }
   return null
 }
 
@@ -60,9 +60,9 @@ export function notificationFor(
       title: `${name} зовёт`,
       options: {
         ...base,
-        body: payload.callKind === 'video' ? '📹' : '📞',
+        body: '📞',
         tag: 'duo-call',
-        data: { url: callPushUrl(payload.callKind, receivedAt) },
+        data: { url: callPushUrl(receivedAt) },
       },
     }
   }

@@ -112,7 +112,7 @@ describe('sendWebPush', () => {
       return new Response(null, { status })
     }) as unknown as typeof fetch
 
-    const r = await sendWebPush(sub, { kind: 'call', callKind: 'voice' }, vapid, { fetcher })
+    const r = await sendWebPush(sub, { kind: 'call' }, vapid, { fetcher })
     expect(r).toEqual({ ok: true, status: 201, gone: false })
     const { url, init } = seen[0]!
     expect(url).toBe(sub.endpoint)
@@ -122,7 +122,7 @@ describe('sendWebPush', () => {
     expect(h.Urgency).toBe('high')
     expect(h.Authorization).toMatch(/^vapid t=/)
     const text = await decrypt(init.body as Uint8Array, ua.publicRaw, ua.pair.privateKey, auth)
-    expect(JSON.parse(text)).toEqual({ kind: 'call', callKind: 'voice' })
+    expect(JSON.parse(text)).toEqual({ kind: 'call' })
 
     status = 410
     expect((await sendWebPush(sub, { kind: 'ping' }, vapid, { fetcher })).gone).toBe(true)

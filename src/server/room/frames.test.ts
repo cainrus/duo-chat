@@ -9,10 +9,9 @@ describe('client frame parsing', () => {
       { t: 'hello', deviceToken: 'abc' },
       { t: 'visibility', visible: false },
       { t: 'signal', env: { v: 1, iv: 'aaa', ct: 'b-_c' } },
-      { t: 'call', kind: 'video' },
+      { t: 'call' },
       { t: 'callCancel' },
       { t: 'callAccept' },
-      { t: 'callDecline' },
       { t: 'callEnd' },
       { t: 'ping' },
       { t: 'replied' },
@@ -34,6 +33,10 @@ describe('client frame parsing', () => {
       j([]),
       j({ t: 'nope' }),
       j({ t: 'call', kind: 'chat' }),
+      // Calls are voice-only: no kind, and no video calls.
+      j({ t: 'call', kind: 'video' }),
+      // There is no decline.
+      j({ t: 'callDecline' }),
       j({ t: 'visibility', visible: 'yes' }),
       j({ t: 'ping', extra: 1 }),
       j({ t: 'signal', env: { v: 2, iv: 'a', ct: 'b' } }),

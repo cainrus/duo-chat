@@ -2,7 +2,7 @@
 // The Durable Object (src/server/room/durable.ts) owns sockets, storage, alarms and push delivery;
 // it feeds events in and executes the returned effects.
 
-import { otherSide, type CallKind, type Side } from '@shared/types'
+import { otherSide, type Side } from '@shared/types'
 import type { ClientToServer, PushPayload, PushSubscriptionJSONLike, RoomView, ServerToClient } from '@shared/protocol'
 import {
   callButtonView,
@@ -36,8 +36,9 @@ export type RoomState = {
    * `pushed`: the callee already got the push for this call (at most one per call).
    * Optional so that state persisted before the field existed still loads.
    */
-  pendingCall: { from: Side; kind: CallKind; until: number; pushed?: boolean } | null
-  activeCall: { kind: CallKind } | null
+  pendingCall: { from: Side; until: number; pushed?: boolean } | null
+  /** A call is connected. (State saved before calls became voice-only holds `{ kind }`: still truthy.) */
+  activeCall: boolean
 }
 
 export type Effect =
@@ -70,7 +71,7 @@ export class RoomCore {
   }
 
   static initialState(): RoomState {
-    return { sides: { a: initialSide(), b: initialSide() }, pendingCall: null, activeCall: null }
+    return { sides: { a: initialSide(), b: initialSide() }, pendingCall: null, activeCall: false }
   }
 
   /** Serializable snapshot for Durable Object storage. */
@@ -143,7 +144,7 @@ export class RoomCore {
         }
         if (pending?.from === peer) {
           // Both called at the same moment: merge into one connected call (counts as answered).
-          this.#answer(pending.kind)
+          this.#answer()
           break
         }
         if (pending?.from === side || !canCall(me.call, now)) {
@@ -151,7 +152,7 @@ export class RoomCore {
           break
         }
         me.call = onCallPlaced(me.call, now)
-        this.#s.pendingCall = { from: side, kind: msg.kind, until: me.call.cooldownUntil!, pushed: false }
+        this.#s.pendingCall = { from: side, until: me.call.cooldownUntil!, pushed: false }
         them.call = onCalledBack(them.call, now)
         them.ping = onPingReply()
         fx.push(...this.#pushRinging(now))
@@ -163,18 +164,14 @@ export class RoomCore {
         break
 
       case 'callAccept':
-        if (pending?.from === peer) this.#answer(pending.kind)
-        break
-
-      case 'callDecline':
-        if (pending?.from === peer) fx.push(...this.#endPending('declined', now))
+        if (pending?.from === peer) this.#answer()
         break
 
       case 'callEnd':
-        // Lenient: "end" on a ringing screen means cancel (caller) or decline (callee).
+        // Lenient: "end" while ringing means cancel for the caller. There is no decline: the
+        // callee simply does not join, and the call rings until its timeout.
         if (this.#s.activeCall) fx.push(...this.#endActive())
         else if (pending?.from === side) fx.push(...this.#endPending('cancelled', now))
-        else if (pending?.from === peer) fx.push(...this.#endPending('declined', now))
         break
 
       case 'ping': {
@@ -236,9 +233,9 @@ export class RoomCore {
       peerPresent: isPresent(p.presence, now),
       call: callButtonView(s.call, now),
       ping: pingButtonView(s.ping, now),
-      incoming: pending?.from === peer ? { kind: pending.kind } : null,
-      outgoing: pending?.from === side ? { kind: pending.kind, until: pending.until } : null,
-      inCall: this.#s.activeCall ? { kind: this.#s.activeCall.kind } : null,
+      incoming: pending?.from === peer,
+      outgoing: pending?.from === side ? { until: pending.until } : null,
+      inCall: !!this.#s.activeCall,
     }
   }
 
@@ -262,7 +259,7 @@ export class RoomCore {
     const callee = otherSide(pending.from)
     if (this.#reachable(callee, now)) return []
     pending.pushed = true
-    return [{ type: 'push', to: callee, payload: { kind: 'call', callKind: pending.kind } }]
+    return [{ type: 'push', to: callee, payload: { kind: 'call' } }]
   }
 
   #updatePresence(side: Side, now: number): void {
@@ -286,9 +283,9 @@ export class RoomCore {
     return this.#sendBoth({ t: 'callEnded', reason })
   }
 
-  #answer(kind: CallKind): void {
+  #answer(): void {
     this.#s.pendingCall = null
-    this.#s.activeCall = { kind }
+    this.#s.activeCall = true
     for (const side of SIDES) {
       this.#s.sides[side].call = onCallAnswered()
       this.#s.sides[side].ping = onPingReply()
@@ -296,7 +293,7 @@ export class RoomCore {
   }
 
   #endActive(): Effect[] {
-    this.#s.activeCall = null
+    this.#s.activeCall = false
     return this.#sendBoth({ t: 'callEnded', reason: 'hangup' })
   }
 

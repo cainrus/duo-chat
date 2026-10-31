@@ -5,7 +5,7 @@
 // - push: shows "<friend> зовёт" (call) or "<friend> зовёт в чат" (ping). The friend's name
 //   comes from the device config in IndexedDB, never from the push itself.
 // - notificationclick: focuses an open window of the app, or opens one. A call notification
-//   opens `/?from=call-push&kind=..&at=..` (or posts the same URL to an open window as
+//   opens `/?from=call-push&at=..` (or posts the same URL to an open window as
 //   { t: 'notification-click', url }), so the app can show "missed call" when the call is over.
 // - precaches the app shell, so the installed app opens without network (it still needs
 //   the network to talk to the friend). Never touches /api.

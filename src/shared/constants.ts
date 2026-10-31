@@ -1,7 +1,10 @@
 // Product rules from the design spec. Change timings here only.
 
-/** Pause after a call attempt (and between ping pushes). */
-export const CALL_COOLDOWN_MS = 2 * 60_000
+/**
+ * Pause after a call attempt (and between ping pushes). A call rings exactly this long:
+ * not accepted by then, it ends as an unanswered attempt.
+ */
+export const CALL_COOLDOWN_MS = 60_000
 
 /** "Nobody's home" lock for calls, and the daily cap window for ping pushes. */
 export const LOCK_MS = 24 * 60 * 60_000

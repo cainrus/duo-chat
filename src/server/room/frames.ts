@@ -74,10 +74,8 @@ export function parseClientFrame(raw: string | ArrayBuffer): ClientToServer | nu
       return env ? { t: 'signal', env } : null
     }
     case 'call':
-      return hasOnly(v, ['t', 'kind']) && (v.kind === 'voice' || v.kind === 'video') ? { t: 'call', kind: v.kind } : null
     case 'callCancel':
     case 'callAccept':
-    case 'callDecline':
     case 'callEnd':
     case 'ping':
     case 'replied':

@@ -2,7 +2,7 @@
 // Everything here is metadata or ciphertext: chat text never goes through the server,
 // and WebRTC signaling travels inside SealedEnvelope.
 
-import type { CallButtonView, CallKind, PingButtonView, SealedEnvelope, Side } from './types'
+import type { CallButtonView, PingButtonView, SealedEnvelope, Side } from './types'
 
 // ---------- HTTP ----------
 
@@ -42,10 +42,10 @@ export type ClientToServer =
   | { t: 'visibility'; visible: boolean }
   /** Encrypted WebRTC signaling, relayed to the peer as is. */
   | { t: 'signal'; env: SealedEnvelope }
-  | { t: 'call'; kind: CallKind }
+  /** Calls are always voice; video is switched on device-to-device, never via the server. */
+  | { t: 'call' }
   | { t: 'callCancel' }
   | { t: 'callAccept' }
-  | { t: 'callDecline' }
   | { t: 'callEnd' }
   | { t: 'ping' }
   /** Sent when this side sent a chat message to the peer (resets the peer's ping counter). */
@@ -59,17 +59,18 @@ export type RoomView = {
   peerPresent: boolean
   call: CallButtonView
   ping: PingButtonView
-  /** A call is ringing towards this side. */
-  incoming: { kind: CallKind } | null
+  /** A call is ringing towards this side (it ends unanswered at the caller's `outgoing.until`). */
+  incoming: boolean
   /** This side is ringing the peer; the call ends unanswered at `until`. */
-  outgoing: { kind: CallKind; until: number } | null
+  outgoing: { until: number } | null
   /** A call is connected (accepted and not ended). */
-  inCall: { kind: CallKind } | null
+  inCall: boolean
 }
 
 export type PingResult = 'nudged' | 'pushed' | 'held'
 
-export type CallEndReason = 'declined' | 'cancelled' | 'timeout' | 'hangup'
+/** There is no "decline": a call nobody joins ends at its timeout (or the caller cancels). */
+export type CallEndReason = 'cancelled' | 'timeout' | 'hangup'
 
 export type ServerToClient =
   | { t: 'view'; view: RoomView }
@@ -85,4 +86,4 @@ export type ServerToClient =
   | { t: 'error'; code: 'unauthorized' | 'bad-request' | 'not-allowed' }
 
 /** Web Push payload (JSON). The service worker adds the peer's name, which it keeps locally. */
-export type PushPayload = { kind: 'call'; callKind: CallKind } | { kind: 'ping' }
+export type PushPayload = { kind: 'call' } | { kind: 'ping' }

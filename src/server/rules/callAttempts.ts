@@ -13,7 +13,7 @@ export type CallAttemptState = {
   lockedSince: number | null
 }
 
-export type UnansweredReason = 'timeout' | 'declined' | 'cancelled'
+export type UnansweredReason = 'timeout' | 'cancelled'
 
 export function initialCallAttempts(): CallAttemptState {
   return { attemptsLeft: CALL_ATTEMPTS_PER_ROUND, cooldownUntil: null, lockedSince: null }
@@ -41,7 +41,7 @@ export function onCallPlaced(s: CallAttemptState, now: number): CallAttemptState
 
 /**
  * The pending call ended without being accepted.
- * 'declined' and 'cancelled' end the cooldown at `now`; 'timeout' happens at cooldown end.
+ * 'cancelled' ends the cooldown at `now`; 'timeout' happens at cooldown end.
  * With no attempts left the button locks ("nobody's home").
  */
 export function onCallUnanswered(

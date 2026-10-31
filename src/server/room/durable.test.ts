@@ -245,9 +245,9 @@ describe('PairRoom: sockets', () => {
   it('persists state and schedules the next alarm', async () => {
     const wa = await open()
     await hello(wa, ta)
-    await msg(wa, { t: 'call', kind: 'voice' })
+    await msg(wa, { t: 'call' })
     const stored = ctx.storage.data.get('room') as { pendingCall: unknown }
-    expect(stored.pendingCall).toMatchObject({ from: 'a', kind: 'voice' })
+    expect(stored.pendingCall).toMatchObject({ from: 'a' })
     expect(ctx.storage.alarm).not.toBeNull()
   })
 
@@ -308,7 +308,7 @@ describe('PairRoom: sockets', () => {
 
     status = 410
     now += 3 * 60_000
-    await msg(wa, { t: 'call', kind: 'voice' })
+    await msg(wa, { t: 'call' })
     await Promise.all(ctx.waits)
     expect(calls).toHaveLength(2)
     const stored = ctx.storage.data.get('room') as { sides: { b: { pushSub: unknown } } }

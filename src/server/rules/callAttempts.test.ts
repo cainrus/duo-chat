@@ -81,13 +81,6 @@ describe('call attempts', () => {
     expect(onCalledBack(s, T0 + 1)).toEqual(s)
   })
 
-  it('a decline ends the cooldown at once but still uses the attempt', () => {
-    const placed = onCallPlaced(initialCallAttempts(), T0)
-    const declined = onCallUnanswered(placed, T0 + 10_000, 'declined')
-    expect(declined.attemptsLeft).toBe(1)
-    expect(canCall(declined, T0 + 10_000)).toBe(true)
-  })
-
   it('cancelling counts as an attempt', () => {
     const placed = onCallPlaced(initialCallAttempts(), T0)
     const cancelled = onCallUnanswered(placed, T0 + 3_000, 'cancelled')

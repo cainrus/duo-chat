@@ -37,16 +37,16 @@ describe('room: restart and reconnect (review focus 1 and 4)', () => {
   it('a callee whose socket drops while ringing still has the call after reconnecting', () => {
     room.connect('a', T0)
     room.connect('b', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     room.disconnect('b', T0 + 1_000)
     const fx = room.connect('b', T0 + 30_000)
-    expect(lastView(fx, 'b')!.incoming).toEqual({ kind: 'voice' })
+    expect(lastView(fx, 'b')!.incoming).toBe(true)
   })
 
   it('a caller whose socket drops cancels the call (it still counts)', () => {
     room.connect('a', T0)
     room.connect('b', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     const fx = room.disconnect('a', T0 + 1_000)
     expect(sends(fx, 'b')).toContainEqual({ t: 'callEnded', reason: 'cancelled' })
     expect(room.state.sides.a.call.attemptsLeft).toBe(1)
@@ -56,20 +56,20 @@ describe('room: restart and reconnect (review focus 1 and 4)', () => {
   it('a dropped socket during a call ends it with hangup for the peer', () => {
     room.connect('a', T0)
     room.connect('b', T0)
-    room.handle('a', { t: 'call', kind: 'video' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     room.handle('b', { t: 'callAccept' }, T0 + 1)
     const fx = room.disconnect('b', T0 + 10_000)
     expect(sends(fx, 'a')).toContainEqual({ t: 'callEnded', reason: 'hangup' })
-    expect(lastView(fx, 'a')!.inCall).toBeNull()
+    expect(lastView(fx, 'a')!.inCall).toBe(false)
   })
 
   it('hiding during a connected call does not end it', () => {
     room.connect('a', T0)
     room.connect('b', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     room.handle('b', { t: 'callAccept' }, T0 + 1)
     const fx = room.handle('b', { t: 'visibility', visible: false }, T0 + 2)
-    expect(lastView(fx, 'a')!.inCall).toEqual({ kind: 'voice' })
+    expect(lastView(fx, 'a')!.inCall).toBe(true)
   })
 })
 
@@ -83,7 +83,7 @@ describe('room: frames and views', () => {
 
   it('never emits frames for a disconnected side', () => {
     room.connect('a', T0)
-    const fx = room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    const fx = room.handle('a', { t: 'call' }, T0)
     expect(sends(fx, 'b')).toEqual([])
   })
 
@@ -100,7 +100,7 @@ describe('room: frames and views', () => {
     const fresh = new RoomCore()
     fresh.setPaired('a')
     expect(lastView(fresh.connect('a', T0), 'a')!.peerPaired).toBe(false)
-    expect(lastView(fresh.handle('a', { t: 'call', kind: 'voice' }, T0), 'a')).toBeDefined()
+    expect(lastView(fresh.handle('a', { t: 'call' }, T0), 'a')).toBeDefined()
     expect(fresh.state.pendingCall).toBeNull()
   })
 })
@@ -111,20 +111,20 @@ describe('room: call rules across both sides', () => {
     room.connect('b', T0)
     room.handle('b', { t: 'visibility', visible: false }, T0 + 1)
     // b is still "present" (grace) and connected, so it is reachable: in-app ring, no push.
-    expect(pushes(room.handle('a', { t: 'call', kind: 'voice' }, T0 + 2), 'b')).toEqual([])
+    expect(pushes(room.handle('a', { t: 'call' }, T0 + 2), 'b')).toEqual([])
   })
 
   it('a second call while already ringing is refused', () => {
     room.connect('a', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
-    expect(sends(room.handle('a', { t: 'call', kind: 'voice' }, T0 + 1), 'a')).toContainEqual({ t: 'error', code: 'not-allowed' })
+    room.handle('a', { t: 'call' }, T0)
+    expect(sends(room.handle('a', { t: 'call' }, T0 + 1), 'a')).toContainEqual({ t: 'error', code: 'not-allowed' })
   })
 
   it('cancelling twice uses both attempts and locks', () => {
     room.connect('a', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     room.handle('a', { t: 'callCancel' }, T0 + 1)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0 + 2)
+    room.handle('a', { t: 'call' }, T0 + 2)
     const fx = room.handle('a', { t: 'callCancel' }, T0 + 3)
     expect(lastView(fx, 'a')!.call).toEqual({ kind: 'nobodyHome', until: T0 + 3 + LOCK_MS })
   })
@@ -132,8 +132,8 @@ describe('room: call rules across both sides', () => {
   it('merging simultaneous calls resets both sides', () => {
     room.connect('a', T0)
     room.connect('b', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
-    const fx = room.handle('b', { t: 'call', kind: 'voice' }, T0 + 1)
+    room.handle('a', { t: 'call' }, T0)
+    const fx = room.handle('b', { t: 'call' }, T0 + 1)
     expect(lastView(fx, 'a')!.call).toEqual({ kind: 'ready' })
     expect(lastView(fx, 'b')!.call).toEqual({ kind: 'ready' })
     expect(room.state.sides.a.call.attemptsLeft).toBe(2)
@@ -145,9 +145,9 @@ describe('room: call rules across both sides', () => {
     room.handle('b', { t: 'pushSubscribe', sub: { endpoint: 'https://push.test/b', keys: { p256dh: 'p', auth: 'a' } } }, T0)
     room.handle('a', { t: 'ping' }, T0)
     room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0 + CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'call' }, T0 + CALL_COOLDOWN_MS)
     room.alarm(T0 + 2 * CALL_COOLDOWN_MS)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0 + 2 * CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'call' }, T0 + 2 * CALL_COOLDOWN_MS)
     room.alarm(T0 + 3 * CALL_COOLDOWN_MS)
     const t = T0 + 3 * CALL_COOLDOWN_MS + 1
     expect(room.view('a', t).call.kind).toBe('nobodyHome')
@@ -156,13 +156,13 @@ describe('room: call rules across both sides', () => {
     room.handle('b', { t: 'replied' }, t)
     expect(room.view('a', t).ping).toEqual({ kind: 'ready' })
     expect(room.view('a', t).call.kind).toBe('nobodyHome')
-    room.handle('b', { t: 'call', kind: 'voice' }, t + 1)
+    room.handle('b', { t: 'call' }, t + 1)
     expect(room.view('a', t + 1).call).toEqual({ kind: 'ready' })
   })
 
   it('an overdue ringing call is closed before the next event is handled', () => {
     room.connect('a', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     // The alarm was late; a ping arrives after the cooldown.
     const fx = room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS + 5)
     expect(sends(fx, 'a')).toContainEqual({ t: 'callEnded', reason: 'timeout' })
@@ -172,9 +172,9 @@ describe('room: call rules across both sides', () => {
 
   it('schedules an alarm when the 24h lock lifts', () => {
     room.connect('a', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     room.handle('a', { t: 'callCancel' }, T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     room.handle('a', { t: 'callCancel' }, T0)
     expect(room.nextAlarmAt(T0)).toBe(T0 + LOCK_MS)
   })
@@ -185,11 +185,11 @@ describe('room: push for a ringing call when the callee turns unreachable', () =
     room.connect('a', T0)
     room.connect('b', T0)
     room.handle('b', { t: 'visibility', visible: false }, T0 + 1)
-    expect(pushes(room.handle('a', { t: 'call', kind: 'video' }, T0 + 2), 'b')).toEqual([])
+    expect(pushes(room.handle('a', { t: 'call' }, T0 + 2), 'b')).toEqual([])
     const expiry = T0 + 1 + PRESENCE_GRACE_MS
     expect(room.nextAlarmAt(T0 + 2)).toBe(expiry)
     expect(pushes(room.alarm(expiry - 1), 'b')).toEqual([])
-    expect(pushes(room.alarm(expiry), 'b')).toEqual([{ kind: 'call', callKind: 'video' }])
+    expect(pushes(room.alarm(expiry), 'b')).toEqual([{ kind: 'call' }])
     // Once per call: later events do not push again.
     expect(pushes(room.alarm(expiry + 10), 'b')).toEqual([])
     expect(pushes(room.disconnect('b', expiry + 20), 'b')).toEqual([])
@@ -198,15 +198,15 @@ describe('room: push for a ringing call when the callee turns unreachable', () =
   it('pushes when the callee socket drops while ringing, once', () => {
     room.connect('a', T0)
     room.connect('b', T0)
-    expect(pushes(room.handle('a', { t: 'call', kind: 'voice' }, T0), 'b')).toEqual([])
-    expect(pushes(room.disconnect('b', T0 + 1_000), 'b')).toEqual([{ kind: 'call', callKind: 'voice' }])
+    expect(pushes(room.handle('a', { t: 'call' }, T0), 'b')).toEqual([])
+    expect(pushes(room.disconnect('b', T0 + 1_000), 'b')).toEqual([{ kind: 'call' }])
     room.connect('b', T0 + 2_000)
     expect(pushes(room.disconnect('b', T0 + 3_000), 'b')).toEqual([])
   })
 
   it('does not push again for a call already pushed when it was placed', () => {
     room.connect('a', T0)
-    expect(pushes(room.handle('a', { t: 'call', kind: 'voice' }, T0), 'b')).toHaveLength(1)
+    expect(pushes(room.handle('a', { t: 'call' }, T0), 'b')).toHaveLength(1)
     expect(pushes(room.alarm(T0 + 1_000), 'b')).toEqual([])
   })
 
@@ -214,7 +214,7 @@ describe('room: push for a ringing call when the callee turns unreachable', () =
     room.connect('a', T0)
     room.connect('b', T0)
     room.handle('b', { t: 'visibility', visible: false }, T0 + 1)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0 + 2)
+    room.handle('a', { t: 'call' }, T0 + 2)
     room.handle('a', { t: 'callCancel' }, T0 + 3)
     expect(pushes(room.alarm(T0 + 1 + PRESENCE_GRACE_MS), 'b')).toEqual([])
   })
@@ -222,10 +222,10 @@ describe('room: push for a ringing call when the callee turns unreachable', () =
   it('loads a pending call persisted without the pushed flag', () => {
     room.connect('a', T0)
     room.connect('b', T0)
-    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    room.handle('a', { t: 'call' }, T0)
     const old = structuredClone(room.state)
     delete old.pendingCall!.pushed
     const restored = new RoomCore(old)
-    expect(pushes(restored.disconnect('b', T0 + 1), 'b')).toEqual([{ kind: 'call', callKind: 'voice' }])
+    expect(pushes(restored.disconnect('b', T0 + 1), 'b')).toEqual([{ kind: 'call' }])
   })
 })
