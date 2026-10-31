@@ -243,7 +243,8 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     if (errorTimer !== null) clearTimeout(errorTimer)
     errorTimer = null
     state.error = text
-    if (text === null || disposed) return
+    // On the setup screen the adult must be able to read why (e.g. device revoked): no auto-clear.
+    if (text === null || disposed || state.phase === 'setup') return
     errorTimer = setTimeout(() => {
       errorTimer = null
       if (state.error === text) state.error = null
