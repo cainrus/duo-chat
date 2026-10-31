@@ -185,7 +185,7 @@ type Harness = {
   messages: ReturnType<typeof memoryMessages>
   fetchCalls: { url: string; init?: RequestInit }[]
   media: { constraints: MediaStreamConstraints[]; streams: Stream[]; fail: Error | null }
-  page: { visible: boolean; emit: (v: boolean) => void; search: string; click: (url: string) => void }
+  page: { visible: boolean; emit: (v: boolean) => void; leave: () => void; search: string; click: (url: string) => void }
   push: { subs: PushSubscriptionJSONLike[] }
   clock: { now: number }
   link: () => FakeLink
@@ -215,6 +215,7 @@ function harness(opts: {
   const clock = { now: T0 }
   const visCbs = new Set<(v: boolean) => void>()
   const clickCbs = new Set<(u: string) => void>()
+  const leaveCbs = new Set<() => void>()
   const pageState = {
     visible: true,
     search: opts.search ?? '',
@@ -224,6 +225,11 @@ function harness(opts: {
     },
     click: (u: string) => {
       for (const cb of clickCbs) cb(u)
+    },
+    /** pagehide: the browser fires it, then the page is hidden. */
+    leave: () => {
+      for (const cb of leaveCbs) cb()
+      pageState.emit(false)
     },
   }
   const page: PageEnv = {
@@ -240,6 +246,10 @@ function harness(opts: {
     onNotificationClick: (cb) => {
       clickCbs.add(cb)
       return () => clickCbs.delete(cb)
+    },
+    onLeave: (cb) => {
+      leaveCbs.add(cb)
+      return () => leaveCbs.delete(cb)
     },
   }
   const push = { subs: [] as PushSubscriptionJSONLike[] }
@@ -467,6 +477,31 @@ describe('live session: server link', () => {
     h.link().deliver({ t: 'view', view: view({ peerPresent: false }) })
     vi.advanceTimersByTime(3 * DIRECT_RETRY_MS)
     expect(h.peer().connects).toBe(3)
+  })
+
+  it('closes the direct link when the page goes away, and reconnects when it is shown again', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view() })
+    h.peer().setOpen(true)
+    const connects = h.peer().connects
+    h.page.leave()
+    // The friend's channel closes now instead of after ICE gives up (~15 s).
+    expect(h.peer().closes).toBe(1)
+    expect(h.session.state.directOpen).toBe(false)
+    // Restored from the back/forward cache (pageshow): connect again without waiting.
+    h.page.emit(true)
+    expect(h.peer().connects).toBe(connects + 1)
+  })
+
+  it('merely hidden (another tab) keeps the direct link', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view() })
+    h.peer().setOpen(true)
+    h.page.emit(false)
+    expect(h.peer().closes).toBe(0)
+    expect(h.session.state.directOpen).toBe(true)
   })
 
   it('does not connect to a friend who has not paired yet', async () => {

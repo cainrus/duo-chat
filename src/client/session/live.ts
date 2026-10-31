@@ -37,6 +37,11 @@ export type PageEnv = {
   takeLaunchSearch(): string
   /** The service worker forwards a notification click to an open window. */
   onNotificationClick(cb: (url: string) => void): () => void
+  /**
+   * The page is going away (pagehide: closed, reloaded, navigated, or frozen into the
+   * back/forward cache). Fires before onVisibility(false).
+   */
+  onLeave(cb: () => void): () => void
 }
 
 export type LiveDeps = {
@@ -145,6 +150,11 @@ function browserPage(): PageEnv | null {
       }
       sw.addEventListener('message', onMessage)
       return () => sw.removeEventListener('message', onMessage)
+    },
+    onLeave(cb) {
+      // pagehide covers unload too; no beforeunload listener: Firefox then skips the bfcache.
+      window.addEventListener('pagehide', cb)
+      return () => window.removeEventListener('pagehide', cb)
     },
   }
 }
@@ -272,8 +282,13 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
           // Timers may have slept with the page.
           rt.store.sweep()
           syncMessages()
+          // Back from pagehide (bfcache restore) or a long sleep: do not wait for the retry tick.
+          retryDirect()
         }
       }),
+      // Close the direct link ourselves, so the friend's channel closes at once instead of
+      // looking open until ICE gives up (~15 s). pageshow / visible reconnects.
+      page.onLeave(() => rt?.peer.close()),
       page.onNotificationClick((url) => {
         const q = url.indexOf('?')
         const pushed = q >= 0 ? parseCallPushUrl(url.slice(q)) : null
