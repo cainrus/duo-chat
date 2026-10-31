@@ -4,7 +4,7 @@
 // main.ts imports it dynamically behind `import.meta.env.VITE_FAKE`, so the build drops it.
 
 import { markRaw, reactive } from 'vue'
-import type { CallEndReason, RoomView } from '@shared/protocol'
+import type { CallEndReason, PingResult, RoomView } from '@shared/protocol'
 import type { CallKind, Side } from '@shared/types'
 import {
   CALL_ATTEMPTS_PER_ROUND,
@@ -28,7 +28,8 @@ export type FakeOptions = {
 
 /** Knobs for the dev panel: everything the server or the friend could do. */
 export type FakeDev = {
-  options: { autoReply: boolean }
+  /** peerHasPush: the friend turned notifications on (pings to her can be pushed). */
+  options: { autoReply: boolean; peerHasPush: boolean }
   setPhase(phase: 'setup' | 'ready'): void
   setConnection(c: Connection): void
   peerJoins(): void
@@ -62,7 +63,7 @@ const REPLIES = ['😂', '🥰', '👍', 'Привет!', '🦄✨', 'Давай
 export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   const now = opts.now ?? Date.now
   const latency = opts.latency ?? 400
-  const options = reactive({ autoReply: opts.autoReply ?? true })
+  const options = reactive({ autoReply: opts.autoReply ?? true, peerHasPush: true })
   let idSeq = 0
   let callAttempts = 0
   let pingPushes = 0
@@ -85,6 +86,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     pendingIds: [],
     directOpen: false,
     nudgeAt: null,
+    lastPing: null,
     media: { local: null, remote: null, micOn: true, camOn: false },
     lastCallEnded: null,
     error: null,
@@ -191,9 +193,13 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
 
     ping() {
       const v = view()
-      if (v.peerPresent || v.ping.kind === 'exhausted') return // nudge goes to the friend, nothing to show here
+      const result = (r: PingResult) => (state.lastPing = { result: r, at: now() })
+      if (v.peerPresent) return void result('nudged')
+      // Rationed, or nobody to push to: nothing is counted.
+      if (!v.peerPaired || v.ping.kind === 'exhausted' || !options.peerHasPush) return void result('held')
       pingPushes++
       if (pingPushes >= PING_PUSHES_PER_ROUND) v.ping = { kind: 'exhausted', until: now() + LOCK_MS }
+      result('pushed')
     },
 
     async startCall(kind) {

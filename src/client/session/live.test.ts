@@ -427,6 +427,10 @@ describe('live session: server link', () => {
     expect(h.session.state.nudgeAt).toBe(T0 + 42)
     h.session.ping()
     expect(h.link().sentOf('ping')).toHaveLength(1)
+    expect(h.session.state.lastPing).toBeNull()
+    h.clock.now = T0 + 50
+    h.link().deliver({ t: 'pingResult', result: 'held' })
+    expect(h.session.state.lastPing).toEqual({ result: 'held', at: T0 + 50 })
   })
 
   it('connects the direct link while the friend is present and closes it when she is gone', async () => {

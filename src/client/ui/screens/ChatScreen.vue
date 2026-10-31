@@ -2,6 +2,8 @@
 // Home screen: the friend, the conversation, the input with a big emoji keyboard, and the
 // three big buttons (ping, voice, video). Every button state comes from the server's view.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { showToast } from 'vant'
+import type { PingResult } from '@shared/protocol'
 import type { CallKind } from '@shared/types'
 import { MAX_MESSAGE_LENGTH } from '../../messages/store'
 import { useDuo } from '../useDuo'
@@ -64,6 +66,19 @@ function scrollToEnd() {
 }
 onMounted(scrollToEnd)
 watch([() => s.messages.length, emojiOpen], scrollToEnd)
+
+// What became of our ping: a short toast, so pressing it is never silent.
+const PING_NOTES: Record<PingResult, string> = {
+  nudged: 'Позвала 👋',
+  pushed: 'Отправила 🔔',
+  held: 'Подожди, она скоро увидит ⏳',
+}
+watch(
+  () => s.lastPing,
+  (p) => {
+    if (p) showToast({ message: PING_NOTES[p.result], position: 'middle', duration: 1600 })
+  },
+)
 
 // The friend pressed "come to the chat" while we are here: wiggle the avatar and ding.
 watch(

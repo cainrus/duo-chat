@@ -67,6 +67,8 @@ export type RoomView = {
   inCall: { kind: CallKind } | null
 }
 
+export type PingResult = 'nudged' | 'pushed' | 'held'
+
 export type CallEndReason = 'declined' | 'cancelled' | 'timeout' | 'hangup'
 
 export type ServerToClient =
@@ -74,6 +76,11 @@ export type ServerToClient =
   | { t: 'signal'; env: SealedEnvelope }
   /** The peer pressed ping while this side is present: show an in-app nudge. */
   | { t: 'nudge' }
+  /**
+   * What became of this side's ping: nudged (the friend is here), pushed (a Web Push went
+   * out), held (rationed by the owner's rules, or the friend has no push subscription).
+   */
+  | { t: 'pingResult'; result: PingResult }
   | { t: 'callEnded'; reason: CallEndReason }
   | { t: 'error'; code: 'unauthorized' | 'bad-request' | 'not-allowed' }
 

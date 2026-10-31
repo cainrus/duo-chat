@@ -32,6 +32,7 @@ const groups: { title: string; items: Btn[] }[] = [
       { label: 'Пишет', run: () => dev.peerSays() },
       { label: 'Эмодзи', run: () => dev.peerSays('🦄🌈') },
       { label: 'Зовёт (nudge)', run: () => dev.nudge() },
+      { label: 'Пуши у неё вкл/выкл', run: () => (dev.options.peerHasPush = !dev.options.peerHasPush) },
     ],
   },
   {
@@ -82,7 +83,7 @@ function run(b: Btn) {
   <van-popup v-model:show="open" position="right" :style="{ width: 'min(360px, 88vw)', height: '100%' }" class="dev-panel" data-test="dev-panel">
     <div class="dev-body">
       <div class="dev-state">
-        phase={{ s.phase }} · {{ s.connection }} · peer {{ s.view?.peerPresent ? 'here' : 'away' }} · call={{ s.view?.call.kind }} · ping={{ s.view?.ping.kind }}
+        phase={{ s.phase }} · {{ s.connection }} · peer {{ s.view?.peerPresent ? 'here' : 'away' }} · call={{ s.view?.call.kind }} · ping={{ s.view?.ping.kind }} · push {{ dev.options.peerHasPush ? 'on' : 'off' }} · last ping={{ s.lastPing?.result ?? '-' }}
       </div>
       <section v-for="g in groups" :key="g.title" class="dev-group">
         <h3 class="dev-title">{{ g.title }}</h3>

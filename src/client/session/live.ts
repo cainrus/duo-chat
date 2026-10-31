@@ -206,6 +206,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     pendingIds: [],
     directOpen: false,
     nudgeAt: null,
+    lastPing: null,
     media: { local: null, remote: null, micOn: false, camOn: false },
     lastCallEnded: null,
     error: null,
@@ -411,6 +412,9 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
         return onView(msg.view)
       case 'nudge':
         state.nudgeAt = deps.now()
+        return
+      case 'pingResult':
+        state.lastPing = { result: msg.result, at: deps.now() }
         return
       case 'callEnded':
         return onCallEnded(msg.reason)

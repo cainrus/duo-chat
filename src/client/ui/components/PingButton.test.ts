@@ -8,6 +8,7 @@ describe('PingButton', () => {
     const w = mount(PingButton, { props: { view: { kind: 'ready' } } })
     expect(w.text()).toContain('Позвать')
     expect(w.find('.van-badge').exists()).toBe(false)
+    expect(w.get('button').classes()).not.toContain('muted')
   })
 
   it('exhausted: badge + "сегодня всё", and still pressable (never disabled)', async () => {
@@ -16,6 +17,7 @@ describe('PingButton', () => {
     expect(w.text()).toContain('сегодня всё')
     expect(w.get('.van-badge').text()).toBe('!')
     const button = w.get('button')
+    expect(button.classes()).toContain('muted')
     expect(button.attributes('disabled')).toBeUndefined()
     await button.trigger('click')
     expect(w.emitted('press')).toHaveLength(1)

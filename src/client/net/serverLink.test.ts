@@ -114,9 +114,12 @@ describe('connectServerLink', () => {
     ws.serverSend({ t: 'bogus' })
     ws.serverSend('42')
     ws.serverSend({ t: 'callEnded', reason: 'timeout' })
+    ws.serverSend({ t: 'pingResult', result: 'pushed' })
+    ws.serverSend({ t: 'pingResult', result: 'maybe' })
+    ws.serverSend({ t: 'pingResult' })
     off()
     ws.serverSend({ t: 'nudge' })
-    expect(got).toEqual([{ t: 'nudge' }, { t: 'callEnded', reason: 'timeout' }])
+    expect(got).toEqual([{ t: 'nudge' }, { t: 'callEnded', reason: 'timeout' }, { t: 'pingResult', result: 'pushed' }])
   })
 
   it('reconnects with exponential backoff capped at max', () => {

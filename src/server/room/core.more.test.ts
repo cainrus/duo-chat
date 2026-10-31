@@ -142,6 +142,7 @@ describe('room: call rules across both sides', () => {
 
   it('a call from the friend resets my ping counter, a text message does not unlock calls', () => {
     room.connect('a', T0)
+    room.handle('b', { t: 'pushSubscribe', sub: { endpoint: 'https://push.test/b', keys: { p256dh: 'p', auth: 'a' } } }, T0)
     room.handle('a', { t: 'ping' }, T0)
     room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS)
     room.handle('a', { t: 'call', kind: 'voice' }, T0 + CALL_COOLDOWN_MS)

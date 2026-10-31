@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import ChatScreen from './ChatScreen.vue'
 import { mountWithDuo } from '../test/mountWithDuo'
@@ -56,6 +56,21 @@ describe('ChatScreen', () => {
     expect((bar.element as HTMLElement).style.position).toBe('relative')
     await bar.get('.van-notice-bar__right-icon').trigger('click')
     expect(session.state.error).toBeNull()
+  })
+
+  it('pressing ping shows what became of it', async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: null }, attachTo: document.body })
+    const toastText = () => [...document.querySelectorAll('.van-toast')].map((t) => t.textContent ?? '').join('|')
+    await wrapper.get('[aria-label="Позвать в чат"]').trigger('click')
+    await vi.waitFor(() => expect(toastText()).toContain('Позвала 👋'))
+    session.dev.peerLeaves()
+    session.dev.options.peerHasPush = false
+    await wrapper.get('[aria-label="Позвать в чат"]').trigger('click')
+    await vi.waitFor(() => expect(toastText()).toContain('Подожди, она скоро увидит ⏳'))
+    session.dev.options.peerHasPush = true
+    await wrapper.get('[aria-label="Позвать в чат"]').trigger('click')
+    await vi.waitFor(() => expect(toastText()).toContain('Отправила 🔔'))
+    wrapper.unmount()
   })
 
   it('my messages and the friend’s messages sit on different sides', async () => {

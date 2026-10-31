@@ -2,7 +2,7 @@
 // The UI only reads `state` (Vue-reactive) and calls actions. It never touches
 // sockets, WebRTC or crypto. A fake implementation (session/fake.ts) drives the UI in dev.
 
-import type { CallEndReason, RoomView } from '@shared/protocol'
+import type { CallEndReason, PingResult, RoomView } from '@shared/protocol'
 import type { CallKind, Side } from '@shared/types'
 import type { ChatMessage } from '../messages/store'
 
@@ -39,6 +39,12 @@ export type DuoState = {
   directOpen: boolean
   /** Time of the last nudge from the friend; the UI animates when it changes. */
   nudgeAt: number | null
+  /**
+   * What became of our last ping (from the server): nudged (she is here), pushed (a
+   * notification went out), held (rationed, or she has no notifications). The UI shows a
+   * short toast when `at` changes.
+   */
+  lastPing: { result: PingResult; at: number } | null
   media: {
     local: MediaStream | null
     remote: MediaStream | null

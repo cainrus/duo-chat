@@ -178,27 +178,63 @@ describe('room: calls', () => {
 })
 
 describe('room: ping', () => {
-  it('nudges a connected friend in the app', () => {
+  const SUB = { endpoint: 'https://push.test/b', keys: { p256dh: 'p', auth: 'a' } }
+  const subscribe = (side: Side) => room.handle(side, { t: 'pushSubscribe', sub: SUB }, T0)
+  const results = (fx: Effect[], to: Side) => sends(fx, to).filter((m) => m.t === 'pingResult')
+
+  it('nudges a connected friend in the app and tells the pinger', () => {
     room.connect('a', T0)
     room.connect('b', T0)
     const fx = room.handle('a', { t: 'ping' }, T0)
     expect(sends(fx, 'b')).toContainEqual({ t: 'nudge' })
     expect(pushes(fx, 'b')).toEqual([])
+    expect(results(fx, 'a')).toEqual([{ t: 'pingResult', result: 'nudged' }])
+    expect(results(fx, 'b')).toEqual([])
   })
 
   it('pushes to an absent friend by the rules and shows the exhausted state', () => {
     room.connect('a', T0)
-    expect(pushes(room.handle('a', { t: 'ping' }, T0), 'b')).toEqual([{ kind: 'ping' }])
-    expect(pushes(room.handle('a', { t: 'ping' }, T0 + 1), 'b')).toEqual([])
+    subscribe('b')
+    const first = room.handle('a', { t: 'ping' }, T0)
+    expect(pushes(first, 'b')).toEqual([{ kind: 'ping' }])
+    expect(results(first, 'a')).toEqual([{ t: 'pingResult', result: 'pushed' }])
+    const rationed = room.handle('a', { t: 'ping' }, T0 + 1)
+    expect(pushes(rationed, 'b')).toEqual([])
+    expect(results(rationed, 'a')).toEqual([{ t: 'pingResult', result: 'held' }])
     const fx = room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS)
     expect(pushes(fx, 'b')).toEqual([{ kind: 'ping' }])
     expect(lastView(fx, 'a')!.ping.kind).toBe('exhausted')
   })
 
+  it('a friend without a push subscription is not pushed and the cap is not spent', () => {
+    room.connect('a', T0)
+    for (let i = 0; i < 3; i++) {
+      const fx = room.handle('a', { t: 'ping' }, T0 + i * CALL_COOLDOWN_MS)
+      expect(pushes(fx, 'b')).toEqual([])
+      expect(results(fx, 'a')).toEqual([{ t: 'pingResult', result: 'held' }])
+    }
+    expect(room.state.sides.a.ping).toEqual({ pushesSent: 0, lastPushAt: null, exhaustedSince: null })
+    expect(room.view('a', T0 + 3 * CALL_COOLDOWN_MS).ping).toEqual({ kind: 'ready' })
+    // Once she subscribes, the first ping is pushed.
+    subscribe('b')
+    const fx = room.handle('a', { t: 'ping' }, T0 + 3 * CALL_COOLDOWN_MS)
+    expect(pushes(fx, 'b')).toEqual([{ kind: 'ping' }])
+    expect(results(fx, 'a')).toEqual([{ t: 'pingResult', result: 'pushed' }])
+  })
+
+  it('a ping to a friend who has not paired is held', () => {
+    const solo = new RoomCore()
+    solo.setPaired('a')
+    solo.connect('a', T0)
+    expect(sends(solo.handle('a', { t: 'ping' }, T0), 'a')).toContainEqual({ t: 'pingResult', result: 'held' })
+  })
+
   it('a reply from the friend resets the ping counter', () => {
     room.connect('a', T0)
+    subscribe('b')
     room.handle('a', { t: 'ping' }, T0)
     room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS)
+    expect(room.view('a', T0 + CALL_COOLDOWN_MS + 1).ping.kind).toBe('exhausted')
     room.connect('b', T0 + CALL_COOLDOWN_MS + 1)
     room.handle('b', { t: 'replied' }, T0 + CALL_COOLDOWN_MS + 2)
     expect(room.view('a', T0 + CALL_COOLDOWN_MS + 3).ping).toEqual({ kind: 'ready' })

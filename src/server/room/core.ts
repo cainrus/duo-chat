@@ -178,12 +178,23 @@ export class RoomCore {
         break
 
       case 'ping': {
-        if (!them.paired) break
+        if (!them.paired) {
+          fx.push(...this.#send(side, { t: 'pingResult', result: 'held' }))
+          break
+        }
         them.ping = onPingReply()
-        const r = decidePing(me.ping, now, this.#reachable(peer, now))
+        const reachable = this.#reachable(peer, now)
+        // A friend with no push subscription cannot be pushed: nothing is counted.
+        if (!reachable && !them.pushSub) {
+          fx.push(...this.#send(side, { t: 'pingResult', result: 'held' }))
+          break
+        }
+        const r = decidePing(me.ping, now, reachable)
         me.ping = r.state
         if (r.decision === 'nudge') fx.push(...this.#send(peer, { t: 'nudge' }))
         else if (r.decision === 'push') fx.push({ type: 'push', to: peer, payload: { kind: 'ping' } })
+        const result = r.decision === 'nudge' ? 'nudged' : r.decision === 'push' ? 'pushed' : 'held'
+        fx.push(...this.#send(side, { t: 'pingResult', result }))
         break
       }
 
