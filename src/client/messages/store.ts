@@ -4,6 +4,7 @@
 // Clock skew guard: a message expires at min(sentAt, arrival time) + TTL, so a peer clock
 // running ahead can never make a message live longer than an hour on this device.
 
+import { MESSAGE_TTL_MS } from '@shared/constants'
 import type { Side } from '@shared/types'
 
 export const MAX_MESSAGE_LENGTH = 1000
@@ -29,59 +30,143 @@ export type MessageStoreOptions = {
 }
 
 export class MessageStore {
-  constructor(_opts: MessageStoreOptions) {
-    throw new Error('not implemented')
+  private readonly self: Side
+  private readonly persistence: MessagePersistence
+  private readonly now: () => number
+  private readonly newId: () => string
+  private messages: StoredMessage[] = []
+  private listeners = new Set<() => void>()
+  private writeChain: Promise<void> = Promise.resolve()
+
+  constructor(opts: MessageStoreOptions) {
+    this.self = opts.self
+    this.persistence = opts.persistence
+    this.now = opts.now ?? Date.now
+    this.newId = opts.newId ?? (() => crypto.randomUUID())
   }
 
   /** Loads persisted messages and drops expired ones. */
   async init(): Promise<void> {
-    throw new Error('not implemented')
+    const loaded = await this.persistence.load()
+    const now = this.now()
+    this.messages = loaded.filter((m) => m.expiresAt > now)
+    if (this.messages.length !== loaded.length) this.persist()
+    if (this.messages.length > 0) this.emit()
   }
 
   /** Adds our message to the timeline and the outbox. Trims; throws on empty or too long text. */
-  compose(_text: string): ChatMessage {
-    throw new Error('not implemented')
+  compose(text: string): ChatMessage {
+    const trimmed = text.trim()
+    if (trimmed.length === 0) throw new Error('empty message')
+    if (trimmed.length > MAX_MESSAGE_LENGTH) throw new Error('message too long')
+    const sentAt = this.now()
+    const msg: ChatMessage = { id: this.newId(), from: this.self, text: trimmed, sentAt }
+    this.messages.push({ ...msg, expiresAt: sentAt + MESSAGE_TTL_MS, pending: true })
+    this.persist()
+    this.emit()
+    return msg
   }
 
   /**
    * A message from the peer arrived. Returns false (and ignores it) when it is expired,
    * a duplicate, not from the peer side, or malformed.
    */
-  receive(_msg: unknown): boolean {
-    throw new Error('not implemented')
+  receive(msg: unknown): boolean {
+    if (typeof msg !== 'object' || msg === null) return false
+    const m = msg as Record<string, unknown>
+    const { id, from, text, sentAt } = m
+    if (typeof id !== 'string' || id.length === 0 || id.length > 100) return false
+    const other: Side = this.self === 'a' ? 'b' : 'a'
+    if (from !== other) return false
+    if (typeof text !== 'string' || text.length < 1 || text.length > MAX_MESSAGE_LENGTH) return false
+    if (typeof sentAt !== 'number' || !Number.isFinite(sentAt)) return false
+    if (this.messages.some((x) => x.id === id)) return false
+    const now = this.now()
+    const expiresAt = Math.min(sentAt, now) + MESSAGE_TTL_MS
+    if (expiresAt <= now) return false
+    this.messages.push({ id, from: other, text, sentAt, expiresAt, pending: false })
+    this.persist()
+    this.emit()
+    return true
   }
 
   /** Our not-yet-sent, not-expired messages, oldest first. */
   outbox(): ChatMessage[] {
-    throw new Error('not implemented')
+    return this.live()
+      .filter((m) => m.pending)
+      .sort(byTime)
+      .map(toChat)
   }
 
-  markSent(_ids: string[]): void {
-    throw new Error('not implemented')
+  markSent(ids: string[]): void {
+    let changed = false
+    for (const m of this.messages) {
+      if (m.pending && ids.includes(m.id)) {
+        m.pending = false
+        changed = true
+      }
+    }
+    if (changed) this.persist()
   }
 
   /** All live messages (ours and theirs), sorted by sentAt then id. */
   timeline(): ChatMessage[] {
-    throw new Error('not implemented')
+    return this.live().sort(byTime).map(toChat)
   }
 
   /** Removes expired messages; returns how many were removed. */
   sweep(): number {
-    throw new Error('not implemented')
+    const now = this.now()
+    const before = this.messages.length
+    this.messages = this.messages.filter((m) => m.expiresAt > now)
+    const removed = before - this.messages.length
+    if (removed > 0) {
+      this.persist()
+      this.emit()
+    }
+    return removed
   }
 
   /** When the next message expires, so the UI can schedule a sweep. */
   nextExpiryAt(): number | null {
-    throw new Error('not implemented')
+    const live = this.live()
+    return live.length === 0 ? null : Math.min(...live.map((m) => m.expiresAt))
   }
 
   /** Called after every change of the timeline. Returns an unsubscribe function. */
-  onChange(_cb: () => void): () => void {
-    throw new Error('not implemented')
+  onChange(cb: () => void): () => void {
+    this.listeners.add(cb)
+    return () => {
+      this.listeners.delete(cb)
+    }
   }
 
   /** Resolves when the latest state has been written to persistence. */
   async flush(): Promise<void> {
-    throw new Error('not implemented')
+    await this.writeChain
   }
+
+  private live(): StoredMessage[] {
+    const now = this.now()
+    return this.messages.filter((m) => m.expiresAt > now)
+  }
+
+  private persist(): void {
+    const snapshot = structuredClone(this.live())
+    this.writeChain = this.writeChain
+      .catch(() => {})
+      .then(() => this.persistence.save(snapshot))
+  }
+
+  private emit(): void {
+    for (const cb of [...this.listeners]) cb()
+  }
+}
+
+function byTime(a: StoredMessage, b: StoredMessage): number {
+  return a.sentAt - b.sentAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+}
+
+function toChat(m: StoredMessage): ChatMessage {
+  return { id: m.id, from: m.from, text: m.text, sentAt: m.sentAt }
 }
