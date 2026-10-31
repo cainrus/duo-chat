@@ -3,7 +3,7 @@
 // states either way, so it never reveals whether she is here). The server's view decides:
 // ready; cooldown (disabled, a ring counts down the seconds, so a kid sees the wait instead of
 // tapping again and again); exhausted (disabled, a calm «🌙 завтра»).
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { CALL_COOLDOWN_MS } from '@shared/constants'
 import type { PingButtonView } from '@shared/types'
 import { useNow } from '../useNow'
@@ -36,26 +36,22 @@ const label = computed(() => {
   return 'Отправить статус онлайн'
 })
 
-// A tap on the disabled button: a tiny shake, nothing else (no motion if asked for less).
-const shaking = ref(false)
+// A tap on the disabled button does nothing: the ring is the whole answer.
 function tap() {
-  if (!disabled.value) return emit('press')
-  shaking.value = false
-  requestAnimationFrame(() => (shaking.value = true))
+  if (!disabled.value) emit('press')
 }
 </script>
 
 <template>
   <div class="action-tile" :data-state="cooling ? 'cooldown' : view.kind" data-test="ping">
-    <!-- aria-disabled, not disabled: the tap still reaches us for the little shake. -->
+    <!-- aria-disabled, not disabled: it stays focusable so a screen reader can read the seconds left. -->
     <button
       type="button"
       class="ping-btn"
-      :class="{ 'is-off': disabled, shake: shaking }"
+      :class="{ 'is-off': disabled }"
       :aria-disabled="disabled"
       :aria-label="label"
       @click="tap"
-      @animationend="shaking = false"
     >
       <svg v-if="cooling" class="ring" viewBox="0 0 64 64" aria-hidden="true">
         <circle class="ring-track" cx="32" cy="32" :r="R" />
@@ -82,14 +78,13 @@ function tap() {
   justify-content: center;
   border: 0;
   border-radius: var(--van-radius-max);
-  background: var(--van-warning-color);
-  color: #fff;
+  background: var(--van-duo-peach);
+  color: var(--van-text-color);
   cursor: pointer;
 }
 .ping-btn.is-off {
-  background: var(--van-background-2);
+  background: var(--van-duo-track);
   color: var(--van-text-color-3);
-  box-shadow: inset 0 0 0 2px var(--van-border-color);
   cursor: default;
 }
 .ring {
@@ -105,10 +100,10 @@ function tap() {
   stroke-width: 4;
 }
 .ring-track {
-  stroke: var(--van-border-color);
+  stroke: var(--van-duo-track);
 }
 .ring-left {
-  stroke: var(--van-warning-color);
+  stroke: var(--van-duo-peach-ink);
   stroke-linecap: round;
   transition: stroke-dashoffset 0.25s linear;
 }
@@ -116,21 +111,7 @@ function tap() {
   font-size: 28px;
   line-height: 1;
 }
-.shake {
-  animation: shake 0.3s ease-in-out;
-}
-@keyframes shake {
-  25% {
-    transform: translateX(-4px);
-  }
-  75% {
-    transform: translateX(4px);
-  }
-}
 @media (prefers-reduced-motion: reduce) {
-  .shake {
-    animation: none;
-  }
   .ring-left {
     transition: none;
   }

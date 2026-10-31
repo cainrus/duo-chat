@@ -165,7 +165,8 @@ message, and entering the voice room. They all look the same, share one
 budget, and never reveal to the sender whether the friend is in the app.
 
 - **One look, no pressure.** Every push is the same notification: title
-  «Дуо», body «онлайн». No names, no emoji, nothing to act on. The trigger kind
+  «онлайн», no body, no app name (owner, 2026-10-31). No names, no emoji,
+  nothing to act on. The trigger kind
   stays only in the notification's data and decides where a click leads.
 - **One budget per sender**, counted on the server for all three triggers:
   the first is granted; the next only after `CALL_COOLDOWN_MS` (1 minute);
@@ -181,9 +182,10 @@ budget, and never reveal to the sender whether the friend is in the app.
 - **The «онлайн» button** (aria «Отправить статус онлайн») is always visible.
   After use it is disabled with a countdown ring and the seconds left (owner:
   so a kid does not tap it 10,000 times); when the budget is used up, a calm
-  disabled «🌙 завтра». Taps on the disabled button do nothing (a tiny shake,
-  none under prefers-reduced-motion). There are no in-app nudges.
-- **Mute bell** (per device, in the chat header, «Уведомления вкл/выкл»). Off:
+  disabled «🌙 завтра». Taps on the disabled button do nothing; the ring is the
+  only animation. There are no in-app nudges.
+- **Notifications switch** (per device, a standard toggle in the chat header,
+  «Уведомления»; owner, 2026-10-31: native-style controls). Off:
   this device gets no pushes at all; the server treats it like a device
   without a subscription. The choice is kept on the device and re-sent on
   every connect. Turning it on when the browser never allowed notifications
@@ -220,7 +222,7 @@ budget, and never reveal to the sender whether the friend is in the app.
 - **Chat** — the only screen after setup (owner, 2026-10-31: "always start in
   the chat"). No names, pictures or presence anywhere: "me" is the right
   bubbles, "the friend" the left ones. The header holds only the offline sign
-  and a bell that turns pushes to this device on or off. Under it a compact
+  and a standard toggle switch that turns pushes to this device on or off. Under it a compact
   call bar: the call switch, one status line («ждём…», «Тебя зовут», the call
   timer, the cooldown countdown or «никого нет») and the «онлайн» button
   (ready, a countdown ring, or «🌙 завтра»). While both are
@@ -262,7 +264,7 @@ budget, and never reveal to the sender whether the friend is in the app.
     no content. It still sees metadata: when someone connects, calls, pings,
     that a message was written (`wrote`, never its text), push counters and
     whether a device muted pushes.
-  - Push text is one fixed line for everything («Дуо» / «онлайн»).
+  - Push text is one fixed line for everything («онлайн», no body).
 - **Identity and pairing:** no accounts, no passwords, exactly two device
   slots.
   - The adult opens setup on the first device; it generates the pair secret
@@ -336,3 +338,14 @@ budget, and never reveal to the sender whether the friend is in the app.
 - Exact visual design, colours, sounds.
 - Reconnect behaviour on network blips.
 - Test strategy; a two-browser local test harness is expected.
+
+## Look (owner, 2026-10-31)
+
+- No names anywhere, not even the app's: the home-screen label and page title are
+  the neutral «чат».
+- Controls look like native iOS/Material ones: a segmented OFF | AUDIO | VIDEO
+  control with a sliding thumb (a locked VIDEO is just greyed), a toggle switch for
+  notifications, a plain rounded «онлайн» button. No bounces, glows, badges or
+  gradients; the cooldown ring is the only animation.
+- One harmonious pastel palette (lavender, mint, peach, sky, butter, rose on a warm
+  cream page). Pastels are fills only; text and icons on them are dark ink, WCAG AA.

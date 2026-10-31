@@ -6,19 +6,43 @@ const font =
   '-apple-system, BlinkMacSystemFont, "SF Pro Rounded", "Segoe UI", Roboto, ' +
   '"Noto Sans", system-ui, sans-serif, "Apple Color Emoji", "Noto Color Emoji"'
 
-export const themeVars: ConfigProviderThemeVars = {
-  // palette: soft and warm, not neon
-  primaryColor: '#6C5CE7',
-  successColor: '#22B07D',
-  dangerColor: '#EF5A6F',
-  warningColor: '#FFB23F',
-  textColor: '#2B2440',
-  textColor2: '#6B6585',
-  textColor3: '#A49FB8',
-  background: '#FFF7EE',
+// One harmonious pastel palette (owner, 2026-10-31): no saturated accents. Pastel tones are
+// fills only; text and icons on them are dark ink, never white. Contrast (WCAG): ink on every
+// fill >= 8:1, the *Ink tones on the page background >= 5.7:1, textColor3 >= 4.5:1.
+// Custom keys become `--van-duo-*` properties (ConfigProvider kebab-cases every key).
+const ink = '#2B2440'
+const lavender = '#CBBDF6'
+
+export const themeVars: ConfigProviderThemeVars & Record<`duo${string}`, string> = {
+  // pastel fills
+  duoLavender: lavender, // my bubble, primary buttons, VIDEO on
+  duoMint: '#BFE8D4', // AUDIO on
+  duoPeach: '#FFD6C0', // «онлайн»
+  duoSky: '#C6E3F6', // her voice room is open (AUDIO highlighted)
+  duoButter: '#FBE9B0',
+  duoRose: '#F9D2DC', // error bar
+  duoTrack: '#EEE7DF', // segmented control track, disabled fills
+  // inks for text and icons that need a hue
+  duoLavenderInk: '#5A48AC',
+  duoMintInk: '#2C6E53',
+  duoPeachInk: '#94502C',
+
+  primaryColor: lavender,
+  successColor: '#2C6E53',
+  dangerColor: '#9C3B57',
+  warningColor: '#7A5A10',
+  textColor: ink,
+  textColor2: '#5E5873',
+  textColor3: '#736D86',
+  background: '#FFF8F1',
   background2: '#FFFFFF',
-  borderColor: '#EFE7DC',
-  activeColor: '#F3ECFF',
+  borderColor: '#EEE7DF',
+  activeColor: '#EEE7DF',
+  // dark ink on the pastel primary
+  buttonPrimaryColor: ink,
+  buttonPrimaryBorderColor: lavender,
+  switchOnBackground: '#BFE8D4',
+  switchBackground: '#EEE7DF',
 
   baseFont: font,
   fontSizeXs: '14px',
@@ -53,5 +77,5 @@ export const themeVars: ConfigProviderThemeVars = {
   tabFontSize: '28px',
   cellFontSize: '18px',
   cellVerticalPadding: '14px',
-  fieldInputTextColor: '#2B2440',
+  fieldInputTextColor: ink,
 }

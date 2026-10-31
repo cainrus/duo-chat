@@ -121,12 +121,12 @@ const notifyLabel = computed(
         </template>
       </div>
       <p class="install-note">
-        Потом откройте Дуо со значка на экране и продолжайте там.
+        Потом откройте чат со значка на экране и продолжайте там.
         <template v-if="apple">На iPad приложение со значка не видит данные Safari, поэтому пару нужно создавать уже в нём.</template>
       </p>
     </van-cell-group>
 
-    <van-steps :active="stepIndex" active-color="var(--van-primary-color)" class="steps">
+    <van-steps :active="stepIndex" active-color="var(--van-duo-lavender-ink)" class="steps">
       <van-step>Пара</van-step>
       <van-step>Уведомления</van-step>
     </van-steps>
@@ -148,7 +148,7 @@ const notifyLabel = computed(
         </template>
         <div v-else class="qr-box" data-test="qr">
           <QrImage :text="link" :size="260" />
-          <p class="hint">Откройте Дуо на втором устройстве (со значка на экране), выберите «Подключиться» и наведите камеру на этот код.</p>
+          <p class="hint">Откройте чат на втором устройстве (со значка на экране), выберите «Подключиться» и наведите камеру на этот код.</p>
           <van-button round icon-position="left" size="normal" @click="copyLink">
             <template #icon><IconCopy class="btn-inline-icon" /></template>
             Скопировать ссылку
@@ -239,7 +239,7 @@ const notifyLabel = computed(
   width: 28px;
   height: 28px;
   margin-right: 10px;
-  color: var(--van-primary-color);
+  color: var(--van-duo-lavender-ink);
 }
 .install-steps {
   display: flex;
@@ -260,7 +260,7 @@ const notifyLabel = computed(
 .install-icon {
   width: 40px;
   height: 40px;
-  color: var(--van-primary-color);
+  color: var(--van-duo-lavender-ink);
 }
 .install-arrow {
   font-size: 24px;

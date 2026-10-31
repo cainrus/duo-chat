@@ -58,8 +58,8 @@ components, passed through each component's `#icon` slot.
 - Shell: a plain flex column at `height: 100dvh`, with
   `padding: env(safe-area-inset-*)` via `van-safe-area-top` / `van-safe-area-bottom`.
 - Header: no names, avatars or presence (owner, 2026-10-31); only the offline sign
-  and the bell.
-- Message list: our `ChatBubble.vue`: background `var(--van-primary-color)` (mine) or
+  and the notifications toggle (`van-switch`).
+- Message list: our `ChatBubble.vue`: background `var(--van-primary-color)` (pastel lavender, dark ink text; mine) or
   `var(--van-background-2)` (theirs), `border-radius: var(--van-radius-lg)`. Emoji-only
   messages get a large font (48px). A voice room left before the other joined is a
   centred service line «📞 голосовой · HH:MM» (no button).
@@ -71,20 +71,20 @@ components, passed through each component's `#icon` slot.
   text) → `van-grid :column-num="6" square :border="false" clickable` →
   `van-grid-item @click="insert(e)"` with the emoji in the default slot at 40px.
 - Call bar under the header (calls live inside the chat; owner, 2026-10-31): one
-  segmented call switch OFF | AUDIO | VIDEO (`CallSwitch.vue`, plain `<button
-  role="radio">` segments on Vant tokens, Phosphor icons phone-slash / phone /
+  segmented call switch OFF | AUDIO | VIDEO (`CallSwitch.vue`, iOS/Material style: a
+  track with one sliding thumb, plain `<button role="radio">` segments on Vant tokens, Phosphor icons phone-slash / phone /
   video-camera, 64×56 targets). Under it one status line: «ждём…», the call
-  timer, «Тебя зовут», «снова через» + `van-count-down`, or «никого нет». The ping
-  button sits at the right of the bar, only while the friend is away
+  timer, «Тебя зовут», «снова через» + `van-count-down`, or «никого нет». The «онлайн»
+  button sits at the right of the bar, always (it must not reveal presence)
   (`PingButton.vue`, a plain button on Vant tokens):
-  - Ready: warning colour, waving hand.
+  - Ready: pastel peach, waving hand in dark ink.
   - Cooldown: disabled look, an SVG ring empties with the seconds left.
   - Pushes used up: disabled, «🌙 завтра».
-  - Her call: the AUDIO segment glows (no glow under prefers-reduced-motion).
-  - VIDEO: disabled while OFF and for 3 s after AUDIO, with a small lock icon.
+  - Her voice room: the AUDIO segment is tinted sky (static, no glow).
+  - VIDEO: disabled (greyed) while OFF and for 3 s after AUDIO.
 - Video (only while both switches are on VIDEO): a rounded block above the messages,
   her `<video>` big, ours small in the corner (`CallVideo.vue`).
-- Header: a bell button toggles pushes to this device («Уведомления вкл/выкл»).
+- Header: a standard `van-switch` («Уведомления») toggles pushes to this device.
 
 **Setup (adult, one time)**
 - `van-steps direction="vertical" :active`, with sections in
@@ -105,58 +105,17 @@ components, passed through each component's `#icon` slot.
 
 ## 4. Theme config
 
-```ts
-// src/theme.ts
-import type { ConfigProviderThemeVars } from 'vant'
-
-const font =
-  '-apple-system, BlinkMacSystemFont, "SF Pro Rounded", "Segoe UI", Roboto, ' +
-  '"Noto Sans", system-ui, sans-serif, "Apple Color Emoji", "Noto Color Emoji"'
-
-export const themeVars: ConfigProviderThemeVars = {
-  // palette: soft and warm, not neon
-  primaryColor: '#6C5CE7',      // lavender-indigo: my bubble, main actions
-  successColor: '#22B07D',      // accept call
-  dangerColor: '#EF5A6F',       // errors
-  warningColor: '#FFB23F',      // ping, muted state
-  textColor: '#2B2440',
-  textColor2: '#6B6585',
-  textColor3: '#A49FB8',
-  background: '#FFF7EE',        // warm cream page
-  background2: '#FFFFFF',       // cards, friend's bubble
-  borderColor: '#EFE7DC',
-  activeColor: '#F3ECFF',
-
-  baseFont: font,
-  fontSizeXs: '14px', fontSizeSm: '16px', fontSizeMd: '18px', fontSizeLg: '22px',
-
-  radiusSm: '8px', radiusMd: '14px', radiusLg: '22px', radiusMax: '999px',
-
-  // big touch targets (≥ 56px; primary actions 72px)
-  buttonDefaultHeight: '56px',
-  buttonLargeHeight: '72px',
-  buttonDefaultFontSize: '18px',
-  buttonNormalFontSize: '18px',
-  buttonIconSize: '32px',
-  buttonRadius: '22px',
-  buttonRoundRadius: '999px',
-
-  popupRoundRadius: '28px',
-  dialogRadius: '24px',
-  dialogButtonHeight: '56px',
-  toastRadius: '20px',
-  toastFontSize: '20px',
-  toastIconSize: '48px',
-  badgeDotSize: '14px',
-  countDownFontSize: '18px',
-  actionSheetItemFontSize: '20px',
-}
-
-```
+The tokens live in `src/client/ui/theme.ts` (the one source; components use only
+`var(--van-*)`). Palette (owner, 2026-10-31): harmonious pastels as fills only:
+lavender (my bubble, primary buttons, VIDEO), mint (AUDIO, switch on), peach
+(«онлайн»), sky (her voice room), butter, rose (error bar) on a warm cream page.
+Text and icons on them are dark ink (`#2B2440`, >= 8:1); the `duo*Ink` tones and
+Vant's success/danger/warning are deep, muted inks for coloured text (>= 5.7:1).
+Custom keys are typed `duo*` and become `--van-duo-*`.
 
 Also needed:
 - `index.html`: `<meta name="viewport" content="width=device-width, initial-scale=1,
-  viewport-fit=cover">`, `<meta name="theme-color" content="#FFF7EE">`.
+  viewport-fit=cover">`, `<meta name="theme-color" content="#FFF8F1">`.
 - Global `body { -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
   user-select: none }`. Keep `user-select: text` on the textarea.
 

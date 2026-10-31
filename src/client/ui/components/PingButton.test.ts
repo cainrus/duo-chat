@@ -34,8 +34,9 @@ describe('PingButton', () => {
     expect(w.emitted('press')).toBeUndefined()
   })
 
-  it('the little shake on a disabled tap stops for people who asked for less motion', () => {
+  it('no decoration beyond the ring: no keyframes, and the ring stops easing for less motion', () => {
+    expect(pingSource).not.toMatch(/@keyframes/)
     const block = pingSource.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/)
-    expect(block?.[1]).toMatch(/\.shake \{\s*animation: none/)
+    expect(block?.[1]).toMatch(/\.ring-left \{\s*transition: none/)
   })
 })

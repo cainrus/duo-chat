@@ -10,7 +10,6 @@ import { useDuo } from '../useDuo'
 import IconOff from '~icons/ph/phone-slash-fill'
 import IconAudio from '~icons/ph/phone-fill'
 import IconVideo from '~icons/ph/video-camera-fill'
-import IconLock from '~icons/ph/lock-simple-fill'
 
 const duo = useDuo()
 const s = duo.state
@@ -40,7 +39,7 @@ const canStart = computed(() => {
   if (!v || v.inCall || v.outgoing) return false
   return v.incoming || (v.peerPaired && v.call.kind === 'ready')
 })
-/** VIDEO is locked for a moment after AUDIO turned on (shown with a lock). */
+/** VIDEO is locked for a moment after AUDIO turned on (just greyed, like any disabled segment). */
 const videoLocked = computed(() => s.myMode !== 'off' && !unlocked.value)
 
 type Segment = { mode: CallMode; label: string; disabled: boolean }
@@ -58,6 +57,8 @@ function pick(seg: Segment) {
 
 <template>
   <div class="switch" role="radiogroup" aria-label="Звонок" data-test="call-switch" :data-mode="s.myMode">
+    <!-- iOS/Material segmented control: one thumb slides under the chosen segment. -->
+    <span class="thumb" :class="`thumb--${s.myMode}`" aria-hidden="true" />
     <button
       v-for="seg in segments"
       :key="seg.mode"
@@ -73,22 +74,41 @@ function pick(seg: Segment) {
     >
       <IconOff v-if="seg.mode === 'off'" class="seg-icon" />
       <IconAudio v-else-if="seg.mode === 'audio'" class="seg-icon" />
-      <template v-else>
-        <IconVideo class="seg-icon" />
-        <IconLock v-if="videoLocked" class="seg-lock" data-test="video-lock" aria-hidden="true" />
-      </template>
+      <IconVideo v-else class="seg-icon" />
     </button>
   </div>
 </template>
 
 <style scoped>
+/* Segment 64px, gap 4px: the thumb moves one step of 68px per segment. */
 .switch {
+  position: relative;
   display: inline-flex;
   gap: 4px;
   padding: 4px;
   border-radius: var(--van-radius-max);
+  background: var(--van-duo-track);
+}
+.thumb {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 64px;
+  height: 56px;
+  border-radius: var(--van-radius-max);
   background: var(--van-background-2);
-  box-shadow: 0 1px 4px rgba(43, 36, 64, 0.12);
+  box-shadow: 0 1px 3px rgba(43, 36, 64, 0.15);
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s;
+}
+.thumb--audio {
+  transform: translateX(68px);
+  background: var(--van-duo-mint);
+}
+.thumb--video {
+  transform: translateX(136px);
+  background: var(--van-duo-lavender);
 }
 .seg {
   position: relative;
@@ -102,57 +122,25 @@ function pick(seg: Segment) {
   background: transparent;
   color: var(--van-text-color-2);
   cursor: pointer;
-  transition:
-    background-color 0.2s,
-    color 0.2s;
+}
+.seg--on {
+  color: var(--van-text-color);
 }
 .seg:disabled {
-  color: var(--van-text-color-3);
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
 .seg-icon {
   width: 30px;
   height: 30px;
 }
-.seg-lock {
-  position: absolute;
-  right: 8px;
-  bottom: 6px;
-  width: 16px;
-  height: 16px;
-}
-.seg--on.seg--off {
-  background: var(--van-active-color);
+/* Her voice room is open: AUDIO is tinted until we join. Static, no glow. */
+.seg--calling {
+  background: var(--van-duo-sky);
   color: var(--van-text-color);
 }
-.seg--on.seg--audio {
-  background: var(--van-success-color);
-  color: #fff;
-}
-.seg--on.seg--video {
-  background: var(--van-primary-color);
-  color: #fff;
-}
-/* Her call: AUDIO glows softly until we join (or it rings out). */
-.seg--calling {
-  background: #e5f7ef;
-  color: var(--van-success-color);
-  animation: calling 1.6s ease-out infinite;
-}
-@keyframes calling {
-  0% {
-    box-shadow: 0 0 0 0 rgba(34, 176, 125, 0.45);
-  }
-  100% {
-    box-shadow: 0 0 0 14px rgba(34, 176, 125, 0);
-  }
-}
 @media (prefers-reduced-motion: reduce) {
-  .seg--calling {
-    animation: none;
-  }
-  .seg {
+  .thumb {
     transition: none;
   }
 }

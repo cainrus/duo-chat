@@ -35,9 +35,9 @@ describe('call switch in the chat', () => {
     expect(disabled('video')).toBe(true)
   })
 
-  it('AUDIO calls her; VIDEO shows a lock and unlocks VIDEO_UNLOCK_MS later; OFF while ringing cancels', async () => {
+  it('AUDIO calls her; VIDEO stays greyed and unlocks VIDEO_UNLOCK_MS later; OFF while ringing cancels', async () => {
     vi.useFakeTimers()
-    const { session, seg, disabled, status, wrapper } = mountChat()
+    const { session, seg, disabled, status } = mountChat()
     await seg('audio').trigger('click')
     await nextTick()
     expect(session.state.myMode).toBe('audio')
@@ -45,11 +45,9 @@ describe('call switch in the chat', () => {
     expect(seg('audio').attributes('aria-checked')).toBe('true')
     expect(status()).toContain('ждём…')
     expect(disabled('video')).toBe(true)
-    expect(wrapper.find('[data-test="video-lock"]').exists()).toBe(true)
 
     await vi.advanceTimersByTimeAsync(VIDEO_UNLOCK_MS)
     expect(disabled('video')).toBe(false)
-    expect(wrapper.find('[data-test="video-lock"]').exists()).toBe(false)
 
     await seg('off').trigger('click')
     await nextTick()
@@ -57,7 +55,7 @@ describe('call switch in the chat', () => {
     expect(session.state.view!.outgoing).toBe(false)
   })
 
-  it('her call: AUDIO glows as «Подключиться», a soft ring plays, no decline anywhere; tapping AUDIO joins', async () => {
+  it('her call: AUDIO is tinted as «Подключиться», a soft ring plays, no decline anywhere; tapping AUDIO joins', async () => {
     const { wrapper, session, seg, status } = mountChat()
     const before = { ...ring }
     session.dev.incoming()
@@ -151,8 +149,9 @@ describe('call switch in the chat', () => {
     expect(status()).toContain('никого нет')
   })
 
-  it('the glow stops for people who asked for less motion', () => {
+  it('a plain segmented control: no glow keyframes; the thumb stops sliding for less motion', () => {
     const block = callSwitchSource.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/)
-    expect(block?.[1]).toMatch(/\.seg--calling \{\s*animation: none/)
+    expect(callSwitchSource).not.toMatch(/@keyframes/)
+    expect(block?.[1]).toMatch(/\.thumb \{\s*transition: none/)
   })
 })

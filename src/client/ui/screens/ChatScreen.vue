@@ -14,8 +14,6 @@ import IconSmiley from '~icons/ph/smiley-fill'
 import IconSend from '~icons/ph/paper-plane-right-fill'
 import IconOffline from '~icons/ph/wifi-slash-bold'
 import IconBell from '~icons/ph/bell-fill'
-import IconBellOff from '~icons/ph/bell-slash-fill'
-
 
 const duo = useDuo()
 const s = duo.state
@@ -55,7 +53,7 @@ function scrollToEnd() {
 onMounted(scrollToEnd)
 watch([() => s.messages.length, emojiOpen, () => s.media.videoOn], scrollToEnd)
 
-// The bell: pushes to this device on or off. Turning them on may ask for permission first.
+// The notifications switch: pushes to this device on or off. Turning them on may ask for permission first.
 const bellOn = computed(() => s.notificationsAllowed && !s.pushMuted)
 function toggleBell() {
   void duo.setPushMuted(bellOn.value)
@@ -70,18 +68,16 @@ function toggleBell() {
         <span v-if="view && !view.peerPaired" class="head-wait" data-test="not-paired">ещё не подключилась</span>
       </div>
       <IconOffline v-if="s.connection !== 'online'" class="head-offline" aria-label="Нет связи" />
-      <button
-        type="button"
-        class="bell"
-        :class="{ 'bell--off': !bellOn }"
-        aria-label="Уведомления вкл/выкл"
-        :aria-pressed="bellOn"
-        data-test="bell"
-        @click="toggleBell"
-      >
-        <IconBell v-if="bellOn" class="bell-icon" />
-        <IconBellOff v-else class="bell-icon" />
-      </button>
+      <!-- A standard toggle switch (owner: native-style controls); the bell only names it. -->
+      <div class="notify">
+        <IconBell class="notify-icon" aria-hidden="true" />
+        <van-switch
+          :model-value="bellOn"
+          aria-label="Уведомления"
+          data-test="notifications"
+          @update:model-value="toggleBell"
+        />
+      </div>
     </header>
 
     <CallBar v-if="view" @ping="duo.ping()" />
@@ -92,7 +88,7 @@ function toggleBell() {
       :text="s.error"
       wrapable
       color="var(--van-danger-color)"
-      background="#FDECEF"
+      background="var(--van-duo-rose)"
       data-test="error"
     >
       <!-- A real button (Vant's closeable × is a bare icon a screen reader cannot name). -->
@@ -167,24 +163,16 @@ function toggleBell() {
   height: 28px;
   color: var(--van-danger-color);
 }
-.bell {
+.notify {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--van-background-2);
-  color: var(--van-warning-color);
-  cursor: pointer;
+  gap: 8px;
+  min-height: 48px;
 }
-.bell--off {
-  color: var(--van-text-color-3);
-}
-.bell-icon {
-  width: 26px;
-  height: 26px;
+.notify-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--van-text-color-2);
 }
 .chat-list {
   flex: 1;

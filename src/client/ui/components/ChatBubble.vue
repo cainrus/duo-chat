@@ -53,7 +53,7 @@ const big = computed(() => isEmojiOnly(props.text))
 }
 .bubble.mine {
   background: var(--van-primary-color);
-  color: #fff;
+  color: var(--van-text-color);
   border-bottom-left-radius: var(--van-radius-lg);
   border-bottom-right-radius: var(--van-radius-sm);
 }
