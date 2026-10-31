@@ -19,6 +19,7 @@
 
    ```sh
    pnpm exec wrangler secret put ADMIN_SECRET        # нужен взрослому, чтобы создать пару или сбросить её
+   # ключи Web Push сгенерировать: node --experimental-strip-types scripts/make-vapid-keys.ts
    pnpm exec wrangler secret put VAPID_PUBLIC_KEY    # ключи Web Push, base64url
    pnpm exec wrangler secret put VAPID_PRIVATE_KEY
    pnpm exec wrangler secret put VAPID_SUBJECT       # mailto:ваш@адрес
