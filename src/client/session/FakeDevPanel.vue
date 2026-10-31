@@ -62,6 +62,7 @@ const groups: { title: string; items: Btn[] }[] = [
       { label: 'Она ответила', run: () => dev.peerAccepts() },
       { label: 'Она отклонила', run: () => dev.peerDeclines() },
       { label: 'Не ответила', run: () => dev.ringTimeout() },
+      { label: 'Пропущенный из пуша', run: () => dev.missedFromPush() },
       { label: 'Она положила трубку', run: () => dev.peerHangsUp() },
       { label: 'Её камера вкл', run: () => dev.peerCamera(true) },
       { label: 'Её камера выкл', run: () => dev.peerCamera(false) },

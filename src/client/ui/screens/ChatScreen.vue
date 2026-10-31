@@ -29,7 +29,6 @@ const list = ref<HTMLElement | null>(null)
 const shaking = ref(false)
 
 const view = computed(() => s.view)
-const self = computed(() => view.value?.self)
 const present = computed(() => !!view.value?.peerPresent)
 const busy = computed(() => !view.value?.peerPaired || !!view.value?.outgoing || !!view.value?.inCall || !!view.value?.incoming)
 const peerName = computed(() => s.peer?.name ?? (view.value?.peerPaired ? 'Подружка' : 'Ждём подружку'))
@@ -91,11 +90,11 @@ watch(
       <DuoAvatar :avatar="s.me?.avatar" :size="40" class="head-me" />
     </header>
 
-    <van-notice-bar v-if="s.error" :text="s.error" mode="closeable" wrapable color="var(--van-danger-color)" background="#FDECEF" />
+    <van-notice-bar v-if="s.error" :text="s.error" mode="closeable" wrapable color="var(--van-danger-color)" background="#FDECEF" @close="duo.dismissError()" />
 
     <main ref="list" class="chat-list" data-test="timeline">
       <div v-if="!s.messages.length" class="chat-empty" aria-hidden="true">👋</div>
-      <ChatBubble v-for="m in s.messages" :key="m.id" :text="m.text" :mine="m.from === self" />
+      <ChatBubble v-for="m in s.messages" :key="m.id" :text="m.text" :mine="m.from === s.self" />
     </main>
 
     <footer class="chat-foot van-safe-area-bottom">

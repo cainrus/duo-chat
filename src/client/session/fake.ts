@@ -49,6 +49,8 @@ export type FakeDev = {
   setCallView(kind: 'ready' | 'cooldown' | 'nobodyHome'): void
   setPingView(kind: 'ready' | 'exhausted'): void
   setError(text: string | null): void
+  /** The app was opened from a call notification after the call was already gone. */
+  missedFromPush(kind?: CallKind): void
 }
 
 export type FakeSession = DuoSession & { dev: FakeDev }
@@ -68,11 +70,13 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   let cooldownTimer: ReturnType<typeof setTimeout> | undefined
   let replyTimer: ReturnType<typeof setTimeout> | undefined
 
-  const self: Side = 'a'
+  const mySide: Side = 'a'
   const peerSide: Side = 'b'
 
   const state = reactive<DuoState>({
     phase: 'setup',
+    self: null,
+    missedCall: null,
     connection: 'online',
     me: null,
     peer: null,
@@ -86,7 +90,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   })
 
   const view = (): RoomView => {
-    if (!state.view) state.view = baseView(self, false)
+    if (!state.view) state.view = baseView(mySide, false)
     return state.view
   }
   const syncDirect = () => {
@@ -146,6 +150,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       await wait()
       if (!adminSecret.trim()) throw new Error('Нужен пароль администратора')
       state.me = me
+      state.self = 'a'
       state.view = baseView('a', false)
       state.phase = 'ready'
       const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
@@ -159,6 +164,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       await wait()
       state.me = me
       state.peer = { ...FRIEND }
+      state.self = 'b'
       state.view = { ...baseView('b', true), peerPresent: true }
       state.phase = 'ready'
       syncDirect()
@@ -172,7 +178,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     sendText(text) {
       const t = text.trim()
       if (!t || t.length > MAX_MESSAGE_LENGTH) return
-      add(self, t)
+      add(mySide, t)
       if (options.autoReply && state.view?.peerPresent) {
         clearTimeout(replyTimer)
         replyTimer = setTimeout(() => dev.peerSays(), 1200)
@@ -190,6 +196,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       const v = view()
       if (v.call.kind !== 'ready' || v.outgoing || v.inCall || v.incoming) return
       await wait()
+      state.missedCall = null
       const until = now() + CALL_COOLDOWN_MS
       callAttempts++
       v.outgoing = { kind, until }
@@ -211,6 +218,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       const v = view()
       if (!v.incoming) return
       await wait()
+      state.missedCall = null
       connect(v.incoming.kind)
     },
 
@@ -240,7 +248,23 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       }
     },
 
+    dismissCallEnded() {
+      state.lastCallEnded = null
+    },
+
+    dismissMissedCall() {
+      state.missedCall = null
+    },
+
+    dismissError() {
+      state.error = null
+    },
+
     dev: undefined as unknown as FakeDev,
+  }
+
+  const missed = (kind: CallKind) => {
+    state.missedCall = { kind, at: now() }
   }
 
   const end = (reason: CallEndReason) => {
@@ -254,7 +278,8 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       if (phase === 'ready' && !state.me) {
         state.me = { ...ME_DEFAULT }
         state.peer = { ...FRIEND }
-        state.view = { ...baseView(self, true), peerPresent: true }
+        state.view = { ...baseView(mySide, true), peerPresent: true }
+        state.self = mySide
         syncDirect()
       }
     },
@@ -291,13 +316,13 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       const t = now()
       const seed: [Side, string, number][] = [
         [peerSide, 'Привет! 👋', 9],
-        [self, 'Привет!!! 🥰', 8],
+        [mySide, 'Привет!!! 🥰', 8],
         [peerSide, '🐱🐶🦄', 7],
-        [self, 'Что делаешь?', 6],
+        [mySide, 'Что делаешь?', 6],
         [peerSide, 'Рисую радугу 🌈🎨', 5],
-        [self, '😍', 4],
+        [mySide, '😍', 4],
         [peerSide, 'Пойдём завтра на площадку?', 3],
-        [self, 'Да! ⭐⭐⭐', 2],
+        [mySide, 'Да! ⭐⭐⭐', 2],
       ]
       for (const [from, text, minAgo] of seed) {
         state.messages.push({ id: `m${++idSeq}`, from, text, sentAt: t - minAgo * 60_000 })
@@ -314,11 +339,13 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     },
     incoming(kind) {
       const v = view()
+      state.missedCall = null
       v.incoming = { kind }
     },
     peerCancels() {
       const v = view()
       if (!v.incoming) return
+      missed(v.incoming.kind)
       v.incoming = null
       end('cancelled')
     },
@@ -336,6 +363,12 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     },
     ringTimeout() {
       const v = view()
+      if (v.incoming) {
+        missed(v.incoming.kind)
+        v.incoming = null
+        end('timeout')
+        return
+      }
       if (!v.outgoing) return
       clearTimeout(ringTimer)
       v.outgoing = null
@@ -374,6 +407,11 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     },
     setError(text) {
       state.error = text
+    },
+    missedFromPush(kind = 'voice') {
+      const v = view()
+      v.incoming = null
+      missed(kind)
     },
   }
   session.dev = dev
