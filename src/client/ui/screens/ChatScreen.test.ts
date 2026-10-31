@@ -31,6 +31,21 @@ describe('ChatScreen', () => {
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
   })
 
+  it('a message that has not reached the friend shows a clock until it is sent', async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
+    expect(wrapper.findAll('[data-test="pending"]')).toHaveLength(0)
+    session.dev.peerLeaves()
+    session.sendText('ты где?')
+    await nextTick()
+    const last = wrapper.findAll('.row').at(-1)!
+    expect(last.find('[data-test="pending"]').exists()).toBe(true)
+    expect(last.get('[data-test="bubble"]').classes()).toContain('pending')
+    session.dev.peerJoins()
+    await nextTick()
+    expect(wrapper.findAll('[data-test="pending"]')).toHaveLength(0)
+    expect(wrapper.findAll('.row').at(-1)!.get('[data-test="bubble"]').classes()).not.toContain('pending')
+  })
+
   it('my messages and the friend’s messages sit on different sides', async () => {
     const { wrapper } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
     const rows = wrapper.findAll('.row')

@@ -200,6 +200,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     peer: null,
     view: null,
     messages: [],
+    pendingIds: [],
     directOpen: false,
     nudgeAt: null,
     media: { local: null, remote: null, micOn: false, camOn: false },
@@ -251,7 +252,13 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   const syncMessages = () => {
     if (!rt) return
     state.messages = rt.store.timeline()
+    syncPending()
     scheduleSweep()
+  }
+
+  const syncPending = () => {
+    const ids = rt ? rt.store.outbox().map((m) => m.id) : []
+    if (ids.length !== state.pendingIds.length || ids.some((id, i) => id !== state.pendingIds[i])) state.pendingIds = ids
   }
 
   const scheduleSweep = () => {
@@ -277,7 +284,10 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       if (!rt.peer.sendData({ t: 'msg', m })) break
       sent.push(m.id)
     }
-    if (sent.length) rt.store.markSent(sent)
+    if (sent.length) {
+      rt.store.markSent(sent)
+      syncPending()
+    }
   }
 
   // ---------- media ----------
@@ -439,6 +449,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     r.link.close()
     state.connection = 'offline'
     state.directOpen = false
+    state.pendingIds = []
     state.view = null
     state.media.remote = null
   }

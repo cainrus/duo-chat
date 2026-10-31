@@ -33,6 +33,8 @@ export type DuoState = {
   view: RoomView | null
   /** Live messages (each disappears 1 hour after it was sent). */
   messages: ChatMessage[]
+  /** Ids of our messages still waiting in the outbox (not handed to the friend yet). */
+  pendingIds: string[]
   /** The direct channel to the friend is open, so messages go out right now. */
   directOpen: boolean
   /** Time of the last nudge from the friend; the UI animates when it changes. */

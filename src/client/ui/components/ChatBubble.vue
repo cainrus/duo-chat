@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { isEmojiOnly } from '../emoji'
+import IconClock from '~icons/ph/clock-bold'
 
-const props = defineProps<{ text: string; mine: boolean }>()
+/** pending: our message has not reached the friend yet (still in the outbox). */
+const props = defineProps<{ text: string; mine: boolean; pending?: boolean }>()
 const big = computed(() => isEmojiOnly(props.text))
 </script>
 
 <template>
-  <div class="row" :class="{ mine }">
-    <div class="bubble" :class="{ mine, big }" data-test="bubble">{{ text }}</div>
+  <div class="row" :class="{ mine, pending }">
+    <IconClock v-if="pending" class="pending-icon" aria-label="Ещё не доставлено" data-test="pending" />
+    <div class="bubble" :class="{ mine, big, pending }" data-test="bubble">{{ text }}</div>
   </div>
 </template>
 
@@ -19,6 +22,20 @@ const big = computed(() => isEmojiOnly(props.text))
 }
 .row.mine {
   justify-content: flex-end;
+}
+.row.pending {
+  align-items: flex-end;
+  gap: 6px;
+}
+.pending-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-bottom: 6px;
+  color: var(--van-text-color-3);
+}
+.bubble.pending {
+  opacity: 0.6;
 }
 .bubble {
   max-width: min(78%, 560px);

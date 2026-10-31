@@ -31,6 +31,7 @@ const shaking = ref(false)
 const view = computed(() => s.view)
 const present = computed(() => !!view.value?.peerPresent)
 const busy = computed(() => !view.value?.peerPaired || !!view.value?.outgoing || !!view.value?.inCall || !!view.value?.incoming)
+const pending = computed(() => new Set(s.pendingIds))
 const peerName = computed(() => s.peer?.name ?? (view.value?.peerPaired ? 'Подружка' : 'Ждём подружку'))
 
 function send() {
@@ -94,7 +95,7 @@ watch(
 
     <main ref="list" class="chat-list" data-test="timeline">
       <div v-if="!s.messages.length" class="chat-empty" aria-hidden="true">👋</div>
-      <ChatBubble v-for="m in s.messages" :key="m.id" :text="m.text" :mine="m.from === s.self" />
+      <ChatBubble v-for="m in s.messages" :key="m.id" :text="m.text" :mine="m.from === s.self" :pending="pending.has(m.id)" />
     </main>
 
     <footer class="chat-foot van-safe-area-bottom">

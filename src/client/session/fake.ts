@@ -82,6 +82,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     peer: null,
     view: null,
     messages: [],
+    pendingIds: [],
     directOpen: false,
     nudgeAt: null,
     media: { local: null, remote: null, micOn: true, camOn: false },
@@ -95,6 +96,8 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   }
   const syncDirect = () => {
     state.directOpen = state.connection === 'online' && !!state.view?.peerPresent
+    // The outbox flushes as soon as the direct link opens.
+    if (state.directOpen && state.pendingIds.length) state.pendingIds = []
   }
   const wait = () => new Promise<void>((r) => setTimeout(r, latency))
   const add = (from: Side, text: string) => {
@@ -178,7 +181,8 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     sendText(text) {
       const t = text.trim()
       if (!t || t.length > MAX_MESSAGE_LENGTH) return
-      add(mySide, t)
+      const msg = add(mySide, t)
+      if (!state.directOpen) state.pendingIds.push(msg.id)
       if (options.autoReply && state.view?.peerPresent) {
         clearTimeout(replyTimer)
         replyTimer = setTimeout(() => dev.peerSays(), 1200)
@@ -333,6 +337,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     },
     clearChat() {
       state.messages.splice(0)
+      state.pendingIds = []
     },
     nudge() {
       state.nudgeAt = now()

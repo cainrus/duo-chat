@@ -516,7 +516,10 @@ describe('live session: messages', () => {
     expect(h.peer().out).toEqual([])
     expect(h.link().sentOf('replied')).toHaveLength(2)
 
+    expect(h.session.state.pendingIds).toEqual(h.session.state.messages.map((m) => m.id))
+
     h.peer().setOpen(true)
+    expect(h.session.state.pendingIds).toEqual([])
     expect(h.peer().out[0]).toEqual({ t: 'profile', p: ME })
     expect(h.peer().out.slice(1).map((f) => f.t === 'msg' && f.m.text)).toEqual(['привет', '🦄'])
     // Marked sent: reopening does not resend.
@@ -534,6 +537,7 @@ describe('live session: messages', () => {
     h.peer().capacity = 2 // profile + one message
     h.peer().setOpen(true)
     expect(h.peer().out.filter((f) => f.t === 'msg')).toHaveLength(1)
+    expect(h.session.state.pendingIds).toEqual([h.session.state.messages[1]!.id])
     h.peer().capacity = Infinity
     h.peer().setOpen(false)
     h.peer().setOpen(true)
@@ -546,6 +550,7 @@ describe('live session: messages', () => {
     h.peer().setOpen(true)
     h.session.sendText('hi')
     expect(h.peer().out.at(-1)).toMatchObject({ t: 'msg', m: { text: 'hi', from: 'a', sentAt: T0 } })
+    expect(h.session.state.pendingIds).toEqual([])
     expect(h.link().sentOf('replied')).toHaveLength(1)
   })
 
