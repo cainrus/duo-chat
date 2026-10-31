@@ -10,8 +10,8 @@ import type { Profile } from '../session/types'
 import type { ServerLink } from '../net/serverLink'
 import { open, seal } from '../crypto/pair'
 
-/** Frames on the data channel (JSON). */
-export type DataFrame = { t: 'msg'; m: ChatMessage } | { t: 'profile'; p: Profile }
+/** Frames on the data channel (JSON). `ack` confirms which message ids arrived. */
+export type DataFrame = { t: 'msg'; m: ChatMessage } | { t: 'profile'; p: Profile } | { t: 'ack'; ids: string[] }
 
 /** Inside the sealed envelope. */
 export type SignalPayload =
@@ -513,5 +513,8 @@ function parseFrame(data: unknown): DataFrame | null {
   // Shape only; the message store and the session validate the content.
   if (value.t === 'msg' && isObject(value.m)) return value as DataFrame
   if (value.t === 'profile' && isObject(value.p)) return value as DataFrame
+  if (value.t === 'ack' && Array.isArray(value.ids) && value.ids.every((id) => typeof id === 'string')) {
+    return { t: 'ack', ids: value.ids as string[] }
+  }
   return null
 }

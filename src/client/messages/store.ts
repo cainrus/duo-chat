@@ -13,7 +13,7 @@ export type ChatMessage = { id: string; from: Side; text: string; sentAt: number
 
 export type StoredMessage = ChatMessage & {
   expiresAt: number
-  /** Our own message that has not been handed to the data channel yet. */
+  /** Our own message the friend has not acked yet. */
   pending: boolean
 }
 
@@ -90,7 +90,7 @@ export class MessageStore {
     return true
   }
 
-  /** Our not-yet-sent, not-expired messages, oldest first. */
+  /** Our not-yet-acked, not-expired messages, oldest first. */
   outbox(): ChatMessage[] {
     return this.live()
       .filter((m) => m.pending)

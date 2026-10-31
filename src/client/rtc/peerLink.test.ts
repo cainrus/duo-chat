@@ -318,8 +318,11 @@ describe('PeerLink: hostile or broken input', () => {
     ch.inject(JSON.stringify({ t: 'msg' }))
     ch.inject(JSON.stringify({ t: 'other', m: {} }))
     ch.inject(new ArrayBuffer(4))
+    ch.inject(JSON.stringify({ t: 'ack', ids: 'x' }))
+    ch.inject(JSON.stringify({ t: 'ack', ids: [1] }))
     ch.inject(JSON.stringify(msg('a', 'ok')))
-    expect(b.frames).toEqual([msg('a', 'ok')])
+    ch.inject(JSON.stringify({ t: 'ack', ids: ['ok'], extra: 1 }))
+    expect(b.frames).toEqual([msg('a', 'ok'), { t: 'ack', ids: ['ok'] }])
   })
 
   it('a stale answer in stable is ignored without breaking the connection', async () => {

@@ -102,6 +102,10 @@ owner said). Cooldown length lives in one config constant.
 - If the other side is not there, the message waits in the sender's outbox
   (on the sender's device) and is sent when both are in the app at the same
   time. If the sender closes the app, delivery waits until both are online.
+  A message leaves the outbox only when the friend's device acks its id (a
+  channel can look open for seconds after her page is gone); unacked ones are
+  resent on every channel open and every 5 s while open, deduped by id.
+  Until the ack the sender sees a small clock on her bubble.
 - No delivery or read marks: the sender does not see whether it arrived.
 - **Every message lives exactly 1 hour from the moment it was sent**,
   wherever it is (owner). Example: sent at 12:00, the friend opens the app at

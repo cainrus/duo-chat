@@ -104,6 +104,12 @@ export const ERROR_TTL_MS = 8_000
 /** While the friend is here but the direct link is not open, connect() is repeated this often. */
 export const DIRECT_RETRY_MS = 5_000
 
+/**
+ * A message handed to an open data channel but not acked by the friend within this time is
+ * sent again (she dedupes by id). A channel can look open for seconds after her page is gone.
+ */
+export const ACK_RESEND_MS = 5_000
+
 const AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
 const VIDEO: MediaTrackConstraints = { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
 
@@ -218,6 +224,9 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   let sweepTimer: ReturnType<typeof setTimeout> | null = null
   let retryTimer: ReturnType<typeof setInterval> | null = null
   let errorTimer: ReturnType<typeof setTimeout> | null = null
+  let resendTimer: ReturnType<typeof setTimeout> | null = null
+  /** Pending message id -> when it was last handed to the current data channel. */
+  const sentAt = new Map<string, number>()
   /**
    * We already answered the friend's profile on the current channel. Her profile proves her
    * end is open and listening, so we send ours once more then: the copy we sent on open may
@@ -303,17 +312,53 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     )
   }
 
+  /**
+   * Hands pending messages to the data channel: those not sent on this channel yet, and those
+   * sent ACK_RESEND_MS ago or earlier without an ack. A message stays pending (clock icon)
+   * until the friend acks it.
+   */
   const flushOutbox = () => {
+    clearResend()
     if (!rt || !rt.peer.dataOpen) return
-    const sent: string[] = []
-    for (const m of rt.store.outbox()) {
+    const now = deps.now()
+    const pending = rt.store.outbox()
+    const live = new Set(pending.map((m) => m.id))
+    for (const id of [...sentAt.keys()]) if (!live.has(id)) sentAt.delete(id)
+    for (const m of pending) {
+      const last = sentAt.get(m.id)
+      if (last !== undefined && now - last < ACK_RESEND_MS) continue
       if (!rt.peer.sendData({ t: 'msg', m })) break
-      sent.push(m.id)
+      sentAt.set(m.id, now)
     }
-    if (sent.length) {
-      rt.store.markSent(sent)
-      syncPending()
-    }
+    scheduleResend()
+  }
+
+  const clearResend = () => {
+    if (resendTimer !== null) clearTimeout(resendTimer)
+    resendTimer = null
+  }
+
+  const scheduleResend = () => {
+    if (disposed || sentAt.size === 0 || !rt?.peer.dataOpen) return
+    const due = Math.min(...sentAt.values()) + ACK_RESEND_MS
+    resendTimer = setTimeout(
+      () => {
+        resendTimer = null
+        flushOutbox()
+      },
+      Math.max(0, due - deps.now()),
+    )
+  }
+
+  const onAck = (ids: string[]) => {
+    if (!rt) return
+    const pending = new Set(rt.store.outbox().map((m) => m.id))
+    const acked = ids.filter((id) => pending.has(id))
+    for (const id of ids) sentAt.delete(id)
+    if (!acked.length) return
+    rt.store.markSent(acked)
+    syncPending()
+    if (sentAt.size === 0) clearResend()
   }
 
   // ---------- media ----------
@@ -446,8 +491,12 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     if (!rt) return
     if (frame.t === 'msg') {
       rt.store.receive(frame.m)
+      // Ack duplicates and expired ones too, so the friend stops resending them.
+      const id = (frame.m as { id?: unknown }).id
+      if (typeof id === 'string' && id.length > 0 && id.length <= 100) rt.peer.sendData({ t: 'ack', ids: [id] })
       return
     }
+    if (frame.t === 'ack') return onAck(frame.ids)
     if (frame.t === 'profile' && isProfile(frame.p)) {
       if (!profileAnswered) {
         profileAnswered = true
@@ -470,6 +519,9 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   const onDataOpen = (open: boolean) => {
     state.directOpen = open
     profileAnswered = false
+    // A new channel: everything still unacked goes again.
+    sentAt.clear()
+    clearResend()
     if (!open || !rt) return
     sendProfile()
     flushOutbox()
@@ -493,6 +545,8 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     sweepTimer = null
     if (retryTimer !== null) clearInterval(retryTimer)
     retryTimer = null
+    clearResend()
+    sentAt.clear()
     endMedia()
     ringing = null
     if (!r) return

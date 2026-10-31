@@ -7,7 +7,7 @@ import type { DeviceConfig, DeviceConfigStore } from '../device/config'
 import type { MessagePersistence, StoredMessage } from '../messages/store'
 import type { LinkStatus, ServerLink } from '../net/serverLink'
 import type { DataFrame } from '../rtc/peerLink'
-import { createLiveSession, DIRECT_RETRY_MS, ERROR_TTL_MS, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
+import { ACK_RESEND_MS, createLiveSession, DIRECT_RETRY_MS, ERROR_TTL_MS, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
 import type { Profile } from './types'
 
 // ---------- fakes ----------
@@ -523,10 +523,13 @@ describe('live session: messages', () => {
     expect(h.session.state.pendingIds).toEqual(h.session.state.messages.map((m) => m.id))
 
     h.peer().setOpen(true)
-    expect(h.session.state.pendingIds).toEqual([])
     expect(h.peer().out[0]).toEqual({ t: 'profile', p: ME })
     expect(h.peer().out.slice(1).map((f) => f.t === 'msg' && f.m.text)).toEqual(['привет', '🦄'])
-    // Marked sent: reopening does not resend.
+    // Handed to the channel is not delivered: still pending until the friend acks.
+    expect(h.session.state.pendingIds).toEqual(h.session.state.messages.map((m) => m.id))
+    h.peer().receive({ t: 'ack', ids: h.session.state.messages.map((m) => m.id) })
+    expect(h.session.state.pendingIds).toEqual([])
+    // Acked: reopening does not resend.
     h.peer().setOpen(false)
     h.peer().setOpen(true)
     expect(h.peer().out.filter((f) => f.t === 'msg')).toHaveLength(2)
@@ -541,6 +544,7 @@ describe('live session: messages', () => {
     h.peer().capacity = 2 // profile + one message
     h.peer().setOpen(true)
     expect(h.peer().out.filter((f) => f.t === 'msg')).toHaveLength(1)
+    h.peer().receive({ t: 'ack', ids: [h.session.state.messages[0]!.id] })
     expect(h.session.state.pendingIds).toEqual([h.session.state.messages[1]!.id])
     h.peer().capacity = Infinity
     h.peer().setOpen(false)
@@ -554,8 +558,75 @@ describe('live session: messages', () => {
     h.peer().setOpen(true)
     h.session.sendText('hi')
     expect(h.peer().out.at(-1)).toMatchObject({ t: 'msg', m: { text: 'hi', from: 'a', sentAt: T0 } })
+    expect(h.session.state.pendingIds).toEqual([h.session.state.messages[0]!.id])
+    h.peer().receive({ t: 'ack', ids: [h.session.state.messages[0]!.id] })
     expect(h.session.state.pendingIds).toEqual([])
     expect(h.link().sentOf('replied')).toHaveLength(1)
+  })
+
+  it('a message sent into a channel that silently died stays pending and goes again on the next open', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.peer().setOpen(true)
+    h.session.sendText('потеряется')
+    const id = h.session.state.messages[0]!.id
+    // The friend's page is gone; our channel still looked open, the frame vanished.
+    expect(h.session.state.pendingIds).toEqual([id])
+    h.peer().setOpen(false)
+    expect(h.session.state.pendingIds).toEqual([id])
+    h.peer().setOpen(true)
+    const msgs = () => h!.peer().out.filter((f) => f.t === 'msg')
+    expect(msgs()).toHaveLength(2)
+    expect(msgs()[1]).toMatchObject({ t: 'msg', m: { id, text: 'потеряется' } })
+    h.peer().receive({ t: 'ack', ids: [id] })
+    expect(h.session.state.pendingIds).toEqual([])
+    h.peer().setOpen(false)
+    h.peer().setOpen(true)
+    expect(msgs()).toHaveLength(2)
+  })
+
+  it('resends unacked messages while the channel stays open', async () => {
+    vi.useFakeTimers({ now: T0 })
+    h = harness({ config })
+    await h.session.ready
+    h.peer().setOpen(true)
+    h.session.sendText('эй')
+    const id = h.session.state.messages[0]!.id
+    const msgs = () => h!.peer().out.filter((f) => f.t === 'msg')
+    expect(msgs()).toHaveLength(1)
+    h.clock.now += ACK_RESEND_MS - 1
+    vi.advanceTimersByTime(ACK_RESEND_MS - 1)
+    expect(msgs()).toHaveLength(1)
+    h.clock.now += 1
+    vi.advanceTimersByTime(1)
+    expect(msgs()).toHaveLength(2)
+    h.peer().receive({ t: 'ack', ids: [id] })
+    h.clock.now += ACK_RESEND_MS * 3
+    vi.advanceTimersByTime(ACK_RESEND_MS * 3)
+    expect(msgs()).toHaveLength(2)
+    expect(h.session.state.pendingIds).toEqual([])
+  })
+
+  it('acks every message it receives, duplicates and expired ones too, but not malformed ones', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.peer().setOpen(true)
+    const acks = () => h!.peer().out.filter((f) => f.t === 'ack').flatMap((f) => (f.t === 'ack' ? f.ids : []))
+    h.peer().receive({ t: 'msg', m: { id: 'm1', from: 'b', text: 'йо', sentAt: T0 } })
+    h.peer().receive({ t: 'msg', m: { id: 'm1', from: 'b', text: 'йо', sentAt: T0 } })
+    h.peer().receive({ t: 'msg', m: { id: 'old', from: 'b', text: 'old', sentAt: T0 - MESSAGE_TTL_MS - 1 } })
+    h.peer().receive({ t: 'msg', m: { id: 42, from: 'b', text: 'bad', sentAt: T0 } as unknown as never })
+    expect(acks()).toEqual(['m1', 'm1', 'old'])
+    expect(h.session.state.messages.map((m) => m.id)).toEqual(['m1'])
+  })
+
+  it('an ack for an unknown or foreign id changes nothing', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.peer().setOpen(true)
+    h.session.sendText('мой')
+    h.peer().receive({ t: 'ack', ids: ['nope'] })
+    expect(h.session.state.pendingIds).toEqual([h.session.state.messages[0]!.id])
   })
 
   it('ignores empty text and reports too long text', async () => {
