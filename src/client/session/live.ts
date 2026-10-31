@@ -9,7 +9,7 @@
 // Everything that touches the browser or the network is injectable (LiveDeps), so the flows
 // are unit-tested with fakes (live.test.ts).
 
-import { markRaw, reactive } from 'vue'
+import { markRaw, reactive, watch } from 'vue'
 import type { CallEndReason, PushSubscriptionJSONLike, RoomView, ServerToClient } from '@shared/protocol'
 import type { CallKind, Side } from '@shared/types'
 import { decodeSecret, derivePairKeys, encodeSecret, generatePairSecret, pairingLink } from '../crypto/pair'
@@ -217,6 +217,12 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   let sweepTimer: ReturnType<typeof setTimeout> | null = null
   let retryTimer: ReturnType<typeof setInterval> | null = null
   let errorTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * We already answered the friend's profile on the current channel. Her profile proves her
+   * end is open and listening, so we send ours once more then: the copy we sent on open may
+   * have gone out before she was ready for it.
+   */
+  let profileAnswered = false
   let media: CallMedia | null = null
   /** A call action is waiting for getUserMedia; no second one starts meanwhile. */
   let acquiring = false
@@ -438,6 +444,10 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       return
     }
     if (frame.t === 'profile' && isProfile(frame.p)) {
+      if (!profileAnswered) {
+        profileAnswered = true
+        sendProfile()
+      }
       const p: Profile = { name: frame.p.name.trim(), avatar: frame.p.avatar }
       if (state.peer?.name === p.name && state.peer.avatar === p.avatar) return
       state.peer = p
@@ -446,12 +456,28 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     }
   }
 
+  const sendProfile = () => {
+    const me = state.me ?? rt?.config.me
+    if (!rt || !me || !rt.peer.dataOpen) return
+    rt.peer.sendData({ t: 'profile', p: { name: me.name, avatar: me.avatar } })
+  }
+
   const onDataOpen = (open: boolean) => {
     state.directOpen = open
+    profileAnswered = false
     if (!open || !rt) return
-    rt.peer.sendData({ t: 'profile', p: { name: rt.config.me.name, avatar: rt.config.me.avatar } })
+    sendProfile()
     flushOutbox()
   }
+
+  // A new name or picture goes to the friend right away.
+  const stopMeWatch = watch(
+    () => (state.me ? `${state.me.name}\u0000${state.me.avatar}` : null),
+    (now, before) => {
+      if (now !== null && before !== null) sendProfile()
+    },
+    { flush: 'sync' },
+  )
 
   // ---------- lifecycle ----------
 
@@ -743,6 +769,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
     dispose() {
       disposed = true
+      stopMeWatch()
       if (errorTimer !== null) clearTimeout(errorTimer)
       errorTimer = null
       for (const off of pageOffs) off()

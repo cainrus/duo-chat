@@ -580,6 +580,38 @@ describe('live session: messages', () => {
     expect(h.session.state.peer).toEqual(FRIEND)
   })
 
+  it("answers the friend's first profile on a channel with ours, once per open", async () => {
+    h = harness({ config })
+    await h.session.ready
+    const profiles = () => h!.peer().out.filter((f) => f.t === 'profile')
+    h.peer().setOpen(true)
+    expect(profiles()).toEqual([{ t: 'profile', p: ME }])
+    h.peer().receive({ t: 'profile', p: FRIEND })
+    expect(profiles()).toHaveLength(2)
+    h.peer().receive({ t: 'profile', p: FRIEND })
+    expect(profiles()).toHaveLength(2)
+    // A new channel: open sends it, and the first profile from her is answered again.
+    h.peer().setOpen(false)
+    h.peer().setOpen(true)
+    expect(profiles()).toHaveLength(3)
+    h.peer().receive({ t: 'profile', p: FRIEND })
+    expect(profiles()).toHaveLength(4)
+    expect(profiles().every((f) => f.t === 'profile' && f.p.name === ME.name)).toBe(true)
+  })
+
+  it('sends the profile again when it changes while the channel is open', async () => {
+    h = harness({ config })
+    await h.session.ready
+    const profiles = () => h!.peer().out.filter((f) => f.t === 'profile')
+    h.session.state.me = { name: 'Маша', avatar: 'cat' }
+    expect(profiles()).toEqual([])
+    h.peer().setOpen(true)
+    expect(profiles()).toEqual([{ t: 'profile', p: { name: 'Маша', avatar: 'cat' } }])
+    h.session.state.me = { name: 'Мария', avatar: 'cat' }
+    expect(profiles().at(-1)).toEqual({ t: 'profile', p: { name: 'Мария', avatar: 'cat' } })
+    expect(profiles()).toHaveLength(2)
+  })
+
   it('removes a message when its hour is over', async () => {
     vi.useFakeTimers({ now: T0 })
     h = harness({ config })
