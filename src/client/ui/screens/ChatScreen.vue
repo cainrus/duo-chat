@@ -113,14 +113,19 @@ watch(
     <van-notice-bar
       v-if="s.error"
       :text="s.error"
-      mode="closeable"
       wrapable
       color="var(--van-danger-color)"
       background="#FDECEF"
       :style="ERROR_BAR_STYLE"
       data-test="error"
-      @close="duo.dismissError()"
-    />
+    >
+      <!-- A real button (Vant's closeable × is a bare icon a screen reader cannot name). -->
+      <template #right-icon>
+        <button type="button" class="error-close" aria-label="Закрыть" @click="duo.dismissError()">
+          <van-icon name="cross" />
+        </button>
+      </template>
+    </van-notice-bar>
 
     <main ref="list" class="chat-list" data-test="timeline">
       <div v-if="!s.messages.length" class="chat-empty" aria-hidden="true">👋</div>
@@ -303,6 +308,25 @@ watch(
 }
 .nudge {
   animation: nudge 0.5s ease-in-out 3;
+}
+.error-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -10px -12px -10px 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nudge {
+    animation: none;
+  }
 }
 @keyframes nudge {
   0%,

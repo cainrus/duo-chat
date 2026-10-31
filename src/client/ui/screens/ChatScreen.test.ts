@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
+import chatScreenSource from './ChatScreen.vue?raw'
 import ChatScreen from './ChatScreen.vue'
 import { mountWithDuo } from '../test/mountWithDuo'
 
@@ -54,8 +55,15 @@ describe('ChatScreen', () => {
     // Vant's floating bubble uses z-index 999 (--van-floating-bubble-z-index).
     expect(Number((bar.element as HTMLElement).style.zIndex)).toBeGreaterThan(999)
     expect((bar.element as HTMLElement).style.position).toBe('relative')
-    await bar.get('.van-notice-bar__right-icon').trigger('click')
+    const close = bar.get('button[aria-label="Закрыть"]')
+    await close.trigger('click')
     expect(session.state.error).toBeNull()
+  })
+
+  it('the nudge wiggle stops for people who asked for less motion', () => {
+    const block = chatScreenSource.match(/@media \(prefers-reduced-motion: reduce\) \{([^}]*)\}/)
+    expect(block?.[1]).toMatch(/\.nudge/)
+    expect(block?.[1]).toMatch(/animation: none/)
   })
 
   it('pressing ping shows what became of it', async () => {

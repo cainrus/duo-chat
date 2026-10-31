@@ -133,7 +133,7 @@ function toggleCamera() {
   </van-config-provider>
 
   <!-- Back to the call from the chat. -->
-  <van-floating-bubble v-if="inCall && minimized" v-model:offset="backOffset" axis="y" magnetic="x" :gap="16" class="back-bubble" data-test="back-to-call" @click="minimized = false">
+  <van-floating-bubble v-if="inCall && minimized" v-model:offset="backOffset" axis="y" magnetic="x" :gap="16" class="back-bubble" role="button" aria-label="Вернуться к звонку" tabindex="0" data-test="back-to-call" @click="minimized = false" @keydown.enter.space.prevent="minimized = false">
     <div class="back-inner">
       <IconPhone class="back-icon" />
       <span class="back-time">{{ elapsed }}</span>
