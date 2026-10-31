@@ -208,7 +208,9 @@ Ping pushes and call pushes are counted separately.
     and a new link; old device tokens are revoked.
 - **Names and avatars** (my call): never in the repo. The adult enters the
   name and picks an avatar (from bundled generic pictures, no photo upload)
-  during pairing; stored in the Durable Object.
+  during pairing; kept only on the device and exchanged over the data channel
+  (never sent to the server). The service worker reads the peer's name from
+  local storage for notification text.
 - **Server secrets** (VAPID private key, TURN credentials, admin reset
   secret) live in Cloudflare secrets, never in the repo. The pair secret
   never reaches the server at all.
