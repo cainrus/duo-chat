@@ -23,8 +23,14 @@ async function main() {
     // For scripted walkthroughs (devtools, screenshots).
     ;(window as unknown as { duoFake: unknown }).duoFake = session.dev
   } else {
-    // Task 7 wires the live session here: app.provide(DUO_KEY, createLiveSession())
-    throw new Error('Live session is not wired yet (Task 7). Run with VITE_FAKE=1.')
+    const { createLiveSession } = await import('./session/live')
+    const session = createLiveSession()
+    // App reads `phase` once at creation; wait until the stored pairing is loaded.
+    await session.ready
+    app.provide(DUO_KEY, session)
+    if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+      void navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    }
   }
   app.mount('#app')
 }

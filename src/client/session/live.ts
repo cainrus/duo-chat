@@ -138,7 +138,8 @@ function browserPage(): PageEnv | null {
 }
 
 function defaultDeps(opts: LiveOptions): LiveDeps {
-  const origin = typeof location !== 'undefined' ? location.origin : 'http://localhost'
+  // Tests may build default deps outside a browser; they override origin anyway.
+  const origin = globalThis.location?.origin ?? ''
   const apiBase = (opts.apiBase ?? '').replace(/\/+$/, '')
   const wsBase = (opts.wsBase ?? (apiBase || origin).replace(/^http/, 'ws')).replace(/\/+$/, '')
   const fetcher: typeof fetch = (...args) => globalThis.fetch(...args)

@@ -5,6 +5,8 @@ import vue from '@vitejs/plugin-vue'
 import Components from 'unplugin-vue-components/vite'
 import { VantResolver } from '@vant/auto-import-resolver'
 import Icons from 'unplugin-icons/vite'
+import { VitePWA } from 'vite-plugin-pwa'
+import { versionManifest } from './build/versionManifest.ts'
 
 const alias = {
   '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
@@ -42,7 +44,18 @@ export default defineConfig({
       resolvers: [VantResolver({ importStyle: !testing })],
     }),
     Icons({ compiler: 'vue3' }),
+    VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src/client/push',
+      filename: 'sw.ts',
+      injectRegister: false,
+      manifest: false, // public/manifest.webmanifest is used as is
+      injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,webmanifest,woff2}'] },
+    }),
+    versionManifest(),
   ],
+  // Local run: the API and WebSocket go to `wrangler dev`.
+  server: { proxy: { '/api': { target: 'http://localhost:8787', ws: true } } },
   resolve: { alias },
   build: {
     // Reproducible output: no sourcemaps with absolute paths, stable hashes.
