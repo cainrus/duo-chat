@@ -29,13 +29,19 @@ const key = {} as CryptoKey
 const unsealed = (env: SealedEnvelope) => JSON.parse(env.ct) as SignalPayload
 const sealFrom = (from: Side, payload: unknown): SealedEnvelope => ({ v: 1, iv: `from-${from}`, ct: JSON.stringify(payload) })
 
-const make = (self: Side, link: FakeServerLink, iceServers: RTCIceServer[] = [{ urls: 'stun:x' }]) =>
+const make = (
+  self: Side,
+  link: FakeServerLink,
+  iceServers: RTCIceServer[] = [{ urls: 'stun:x' }],
+  extra: Partial<ConstructorParameters<typeof PeerLink>[0]> = {},
+) =>
   new PeerLink({
     self,
     signalingKey: key,
     link,
     getIceServers: async () => iceServers,
     RTCPeerConnectionImpl: FakeRTCPeerConnectionImpl,
+    ...extra,
   })
 
 type Watched = { peer: PeerLink; frames: DataFrame[]; opens: boolean[]; remotes: (MediaStream | null)[] }
@@ -423,6 +429,50 @@ describe('PeerLink: lifecycle', () => {
     expect(pcs().filter((pc) => !pc.closed)).toHaveLength(2)
     expect(a.peer.sendData(msg('a', 'again'))).toBe(true)
     await until(() => b.frames.length === 1)
+  })
+
+  const dropFirstAnswer = (link: FakeServerLink) => {
+    let dropped = false
+    link.drop = (env) => {
+      const s = unsealed(env)
+      if (dropped || s.kind !== 'description' || s.description.type !== 'answer') return false
+      dropped = true
+      return true
+    }
+    return () => dropped
+  }
+
+  it('recovers after the connect timeout when an answer is lost', async () => {
+    const links = relayPair()
+    const a = watch(make('a', links.a, undefined, { connectTimeoutMs: 150 }))
+    const b = watch(make('b', links.b, undefined, { connectTimeoutMs: 150 }))
+    const dropped = dropFirstAnswer(links.b)
+    a.peer.connect()
+    b.peer.connect()
+    await until(() => dropped())
+    await settle()
+    expect(a.peer.dataOpen || b.peer.dataOpen).toBe(false)
+    await until(() => a.peer.dataOpen && b.peer.dataOpen, 3000)
+    expect(signals(links.a).filter((s) => s.kind === 'restart').length).toBeGreaterThanOrEqual(1)
+    expect(a.peer.sendData(msg('a', 'recovered'))).toBe(true)
+    await until(() => b.frames.length === 1)
+  })
+
+  it("a peer's restart rebuilds an older connection that never opened", async () => {
+    const links = relayPair()
+    // Long connect timeouts: only the restart can unstick 'a'.
+    const a = watch(make('a', links.a, undefined, { restartGraceMs: 50 }))
+    const b = watch(make('b', links.b, undefined, { restartGraceMs: 50 }))
+    const dropped = dropFirstAnswer(links.b)
+    a.peer.connect()
+    b.peer.connect()
+    await until(() => dropped())
+    await new Promise((r) => setTimeout(r, 100))
+    expect(a.peer.dataOpen).toBe(false)
+    // 'b' starts over (e.g. after a reload); 'a' must not keep its stuck connection.
+    b.peer.close()
+    b.peer.connect()
+    await until(() => a.peer.dataOpen && b.peer.dataOpen)
   })
 
   it('close() while the ICE servers are loading creates nothing', async () => {

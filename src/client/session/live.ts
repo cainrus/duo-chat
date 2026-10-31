@@ -98,6 +98,9 @@ function mediaError(err: unknown): string {
   return T.media
 }
 
+/** While the friend is here but the direct link is not open, connect() is repeated this often. */
+export const DIRECT_RETRY_MS = 5_000
+
 const AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
 const VIDEO: MediaTrackConstraints = { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
 
@@ -208,6 +211,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   let disposed = false
   let pendingSub: PushSubscriptionJSONLike | null = null
   let sweepTimer: ReturnType<typeof setTimeout> | null = null
+  let retryTimer: ReturnType<typeof setInterval> | null = null
   let media: CallMedia | null = null
   /** A call action is waiting for getUserMedia; no second one starts meanwhile. */
   let acquiring = false
@@ -388,6 +392,12 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
   const connectionOf = (s: LinkStatus): Connection => (s === 'open' ? 'online' : s === 'connecting' ? 'connecting' : 'offline')
 
+  /** connect() is idempotent and cheap; repeating it unsticks a link whose setup got lost. */
+  const retryDirect = () => {
+    const v = state.view
+    if (rt && v?.peerPresent && v.peerPaired && !state.directOpen) rt.peer.connect()
+  }
+
   // ---------- data channel ----------
 
   const onData = (frame: DataFrame) => {
@@ -419,6 +429,8 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     rt = null
     if (sweepTimer !== null) clearTimeout(sweepTimer)
     sweepTimer = null
+    if (retryTimer !== null) clearInterval(retryTimer)
+    retryTimer = null
     endMedia()
     ringing = null
     if (!r) return
@@ -464,6 +476,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       }),
     )
     state.connection = connectionOf(link.status)
+    retryTimer = setInterval(retryDirect, DIRECT_RETRY_MS)
     link.setVisible(page ? page.isVisible() : true)
     syncMessages()
 

@@ -26,7 +26,20 @@ export type PeerLinkOptions = {
   link: ServerLink
   getIceServers: () => Promise<RTCIceServer[]>
   RTCPeerConnectionImpl?: typeof RTCPeerConnection
+  /** Tear down and restart a connection whose data channel has not opened by then. */
+  connectTimeoutMs?: number
+  /**
+   * A peer's `restart` keeps our not-yet-open connection only while it is younger than this
+   * (both sides connecting at once); an older one is stuck (a lost offer or answer) and is rebuilt.
+   */
+  restartGraceMs?: number
+  now?: () => number
 }
+
+/** A connection whose data channel has not opened within this time is started over. */
+export const CONNECT_TIMEOUT_MS = 15_000
+/** See PeerLinkOptions.restartGraceMs. */
+export const RESTART_GRACE_MS = 3_000
 
 const CHANNEL_LABEL = 'chat'
 
@@ -38,7 +51,10 @@ const debug = (...args: unknown[]) => console.debug('[peerLink]', ...args)
  *   connection failed) first sends `restart`, then negotiates. The peer drops a connection
  *   that was ever established (it belongs to an older session, e.g. before a reload) and
  *   starts a fresh one without sending `restart` back; a connection that never opened is
- *   kept, so two sides connecting at once do not tear each other down.
+ *   kept while it is young (RESTART_GRACE_MS), so two sides connecting at once do not tear
+ *   each other down; an older one that never opened is stuck and is rebuilt.
+ * - A connection whose data channel has not opened within CONNECT_TIMEOUT_MS (an offer or
+ *   answer got lost) is torn down and started over, announcing `restart`.
  * - An incoming offer when there is no connection creates one (the peer got there first).
  *   The polite side also recovers from an offer its connection rejects (a stale connection
  *   meeting a fresh peer) by starting over and applying the offer to the new connection.
@@ -51,6 +67,9 @@ export class PeerLink {
   private readonly link: ServerLink
   private readonly getIceServers: () => Promise<RTCIceServer[]>
   private readonly Impl: typeof RTCPeerConnection
+  private readonly connectTimeoutMs: number
+  private readonly restartGraceMs: number
+  private readonly now: () => number
 
   private pc: RTCPeerConnection | null = null
   private channel: RTCDataChannel | null = null
@@ -61,6 +80,9 @@ export class PeerLink {
   /** The data channel of the current connection has opened at least once. */
   private everOpen = false
   private open = false
+  /** When the current connection was created. */
+  private createdAt = 0
+  private connectTimer: ReturnType<typeof setTimeout> | null = null
 
   private makingOffer = false
   private ignoreOffer = false
@@ -87,6 +109,9 @@ export class PeerLink {
     this.link = opts.link
     this.getIceServers = opts.getIceServers
     this.Impl = opts.RTCPeerConnectionImpl ?? globalThis.RTCPeerConnection
+    this.connectTimeoutMs = opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
+    this.restartGraceMs = opts.restartGraceMs ?? RESTART_GRACE_MS
+    this.now = opts.now ?? (() => Date.now())
     this.link.onMessage((msg) => {
       if (msg.t === 'signal') this.enqueue(() => this.receive(msg.env))
     })
@@ -175,6 +200,15 @@ export class PeerLink {
     this.creating = false
     const pc = new this.Impl({ iceServers })
     this.pc = pc
+    this.createdAt = this.now()
+    this.connectTimer = setTimeout(() => {
+      this.connectTimer = null
+      if (this.pc !== pc || this.everOpen || this.creating) return
+      debug('data channel did not open in time, starting over')
+      this.creating = true
+      const next = ++this.gen
+      this.enqueue(() => this.start(next, true))
+    }, this.connectTimeoutMs)
 
     pc.onnegotiationneeded = async () => {
       if (this.pc !== pc) return
@@ -230,6 +264,8 @@ export class PeerLink {
     const ch = this.channel
     this.pc = null
     this.channel = null
+    if (this.connectTimer !== null) clearTimeout(this.connectTimer)
+    this.connectTimer = null
     this.everOpen = false
     this.makingOffer = false
     this.ignoreOffer = false
@@ -354,9 +390,10 @@ export class PeerLink {
   }
 
   private async onRestart(): Promise<void> {
-    // A connection that never opened is already fresh: keep it (both sides connecting at once).
-    if (this.pc && !this.everOpen) return
     if (this.creating) return
+    // A young connection that never opened is already fresh: keep it (both sides connecting
+    // at once). An older one is stuck (its offer or answer was lost): rebuild.
+    if (this.pc && !this.everOpen && this.now() - this.createdAt < this.restartGraceMs) return
     await this.start(++this.gen, false)
   }
 

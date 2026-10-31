@@ -7,7 +7,7 @@ import type { DeviceConfig, DeviceConfigStore } from '../device/config'
 import type { MessagePersistence, StoredMessage } from '../messages/store'
 import type { LinkStatus, ServerLink } from '../net/serverLink'
 import type { DataFrame } from '../rtc/peerLink'
-import { createLiveSession, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
+import { createLiveSession, DIRECT_RETRY_MS, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
 import type { Profile } from './types'
 
 // ---------- fakes ----------
@@ -444,6 +444,25 @@ describe('live session: server link', () => {
     // Not closed again while she stays away.
     h.link().deliver({ t: 'view', view: view({ peerPresent: false }) })
     expect(h.peer().closes).toBe(1)
+  })
+
+  it('keeps calling connect() while the friend is here and the direct link is not open', async () => {
+    vi.useFakeTimers({ now: T0 })
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.peer().connects).toBe(1)
+    vi.advanceTimersByTime(DIRECT_RETRY_MS)
+    expect(h.peer().connects).toBe(2)
+    vi.advanceTimersByTime(DIRECT_RETRY_MS)
+    expect(h.peer().connects).toBe(3)
+    h.peer().setOpen(true)
+    vi.advanceTimersByTime(3 * DIRECT_RETRY_MS)
+    expect(h.peer().connects).toBe(3)
+    h.peer().setOpen(false)
+    h.link().deliver({ t: 'view', view: view({ peerPresent: false }) })
+    vi.advanceTimersByTime(3 * DIRECT_RETRY_MS)
+    expect(h.peer().connects).toBe(3)
   })
 
   it('does not connect to a friend who has not paired yet', async () => {
