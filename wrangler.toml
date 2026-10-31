@@ -1,0 +1,25 @@
+name = "duo-chat"
+main = "src/server/worker.ts"
+compatibility_date = "2026-10-01"
+
+# The built PWA is served by the same Worker (static assets), so the app and the API share an origin.
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "PairRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PairRoom"]
+
+# Secrets (wrangler secret put ...), never in the repo:
+#   ADMIN_SECRET        creating a pair (slot 'a') and wiping a room
+#   VAPID_PUBLIC_KEY    base64url
+#   VAPID_PRIVATE_KEY   base64url
+#   VAPID_SUBJECT       mailto: contact for push services
+#   TURN_KEY_ID         Cloudflare Realtime TURN key id
+#   TURN_KEY_API_TOKEN  Cloudflare Realtime TURN API token

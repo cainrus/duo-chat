@@ -1,0 +1,81 @@
+// Wire protocol between the app and the server (Cloudflare Worker + one Durable Object per pair).
+// Everything here is metadata or ciphertext: chat text never goes through the server,
+// and WebRTC signaling travels inside SealedEnvelope.
+
+import type { CallButtonView, CallKind, PingButtonView, SealedEnvelope, Side } from './types'
+
+// ---------- HTTP ----------
+
+/**
+ * POST /api/rooms/:roomId/claim
+ * Slot 'a' (creating the pair) requires `Authorization: Bearer <ADMIN_SECRET>`.
+ * Slot 'b' needs no auth and succeeds once, while slot 'a' is taken and 'b' is free.
+ * 409 when the pair is full, 401 for a bad admin secret, 404 for 'b' on an unknown room.
+ */
+export type ClaimRequest = { side: Side }
+export type ClaimResponse = { side: Side; deviceToken: string }
+
+/** DELETE /api/rooms/:roomId with the admin bearer: wipes the room (revokes both devices). */
+
+/**
+ * GET /api/rooms/:roomId/ice with `Authorization: Bearer <deviceToken>`:
+ * short-lived TURN/STUN servers for RTCPeerConnection.
+ */
+export type IceResponse = { iceServers: RTCIceServerJSON[] }
+export type RTCIceServerJSON = { urls: string | string[]; username?: string; credential?: string }
+
+/** GET /api/vapid-public-key -> { key } (base64url), for PushManager.subscribe. */
+export type VapidKeyResponse = { key: string }
+
+// ---------- WebSocket: /api/rooms/:roomId/ws ----------
+// The first frame from the client must be `hello`; anything else closes the socket.
+
+export type PushSubscriptionJSONLike = {
+  endpoint: string
+  expirationTime?: number | null
+  keys: { p256dh: string; auth: string }
+}
+
+export type ClientToServer =
+  | { t: 'hello'; deviceToken: string }
+  /** App visible (foreground) or hidden. Drives presence. */
+  | { t: 'visibility'; visible: boolean }
+  /** Encrypted WebRTC signaling, relayed to the peer as is. */
+  | { t: 'signal'; env: SealedEnvelope }
+  | { t: 'call'; kind: CallKind }
+  | { t: 'callCancel' }
+  | { t: 'callAccept' }
+  | { t: 'callDecline' }
+  | { t: 'callEnd' }
+  | { t: 'ping' }
+  /** Sent when this side sent a chat message to the peer (resets the peer's ping counter). */
+  | { t: 'replied' }
+  | { t: 'pushSubscribe'; sub: PushSubscriptionJSONLike }
+
+/** Full UI-relevant state for one side. Sent on connect and after every change. */
+export type RoomView = {
+  self: Side
+  peerPaired: boolean
+  peerPresent: boolean
+  call: CallButtonView
+  ping: PingButtonView
+  /** A call is ringing towards this side. */
+  incoming: { kind: CallKind } | null
+  /** This side is ringing the peer; the call ends unanswered at `until`. */
+  outgoing: { kind: CallKind; until: number } | null
+  /** A call is connected (accepted and not ended). */
+  inCall: { kind: CallKind } | null
+}
+
+export type CallEndReason = 'declined' | 'cancelled' | 'timeout' | 'hangup'
+
+export type ServerToClient =
+  | { t: 'view'; view: RoomView }
+  | { t: 'signal'; env: SealedEnvelope }
+  /** The peer pressed ping while this side is present: show an in-app nudge. */
+  | { t: 'nudge' }
+  | { t: 'callEnded'; reason: CallEndReason }
+  | { t: 'error'; code: 'unauthorized' | 'bad-request' | 'not-allowed' }
+
+/** Web Push payload (JSON). The service worker adds the peer's name, which it keeps locally. */
+export type PushPayload = { kind: 'call'; callKind: CallKind } | { kind: 'ping' }
