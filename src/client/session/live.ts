@@ -282,6 +282,13 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     pushedCall = parseCallPushUrl(page.takeLaunchSearch())
     pageOffs.push(
       page.onVisibility((visible) => {
+        // Voice room: we wait for her only while our app is visible. Hidden (screen off, app
+        // switched, page closed) while she has not joined yet: we leave (the server cancels
+        // too when it hears we are hidden). A connected call keeps going in the background.
+        if (!visible && rt && state.view?.outgoing && !state.view.inCall) {
+          rt.link.send({ t: 'callCancel' })
+          endCall()
+        }
         rt?.link.setVisible(visible)
         if (visible && rt) {
           // Timers may have slept with the page.
@@ -535,7 +542,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       if (callStream || prev?.inCall) endCall()
       // While she calls us, her switch is on AUDIO.
       state.peerMode = view.incoming ? 'audio' : 'off'
-      // Our call stopped ringing without connecting (timeout, cancel): back to OFF.
+      // We stopped waiting before she joined (cancel, refused): back to OFF.
       if (prev?.outgoing && !view.outgoing) endCall()
     }
 
@@ -550,7 +557,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
   const onCallEnded = (reason: CallEndReason) => {
     state.lastCallEnded = reason
-    if (ringing && !responded && (reason === 'cancelled' || reason === 'timeout')) {
+    if (ringing && !responded && reason === 'cancelled') {
       state.missedCall = { at: deps.now() }
     }
     ringing = false

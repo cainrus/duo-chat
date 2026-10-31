@@ -36,8 +36,8 @@ watch(
 )
 
 const NOTES = {
-  caller: { timeout: 'Не ответила 🤷', cancelled: null, hangup: 'Пока-пока 👋' },
-  callee: { timeout: null, cancelled: null, hangup: 'Пока-пока 👋' },
+  caller: { cancelled: null, hangup: 'Пока-пока 👋' },
+  callee: { cancelled: null, hangup: 'Пока-пока 👋' },
 } as const
 
 // The session sets lastCallEnded; the UI shows a short note and asks the session to clear it.

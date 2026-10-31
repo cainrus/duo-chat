@@ -46,7 +46,6 @@ export type FakeDev = {
   peerCancels(): void
   /** She joins our ringing call. */
   peerAccepts(): void
-  ringTimeout(): void
   peerHangsUp(): void
   /** Her switch during a call: AUDIO or VIDEO. */
   peerMode(mode: 'audio' | 'video'): void
@@ -70,7 +69,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   let idSeq = 0
   let callAttempts = 0
   let pingPushes = 0
-  let ringTimer: ReturnType<typeof setTimeout> | undefined
   let cooldownTimer: ReturnType<typeof setTimeout> | undefined
   let replyTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -139,11 +137,17 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   }
 
   // --- call attempt rules, simplified from the server's state machine ---
-  /** The call ended unanswered: the cooldown ends with it; out of attempts locks the button. */
+  /** We stopped waiting before she joined: a pause before the next attempt, or "nobody's home". */
   const finishAttempt = () => {
     const v = view()
-    clearTimeout(cooldownTimer)
-    v.call = callAttempts >= CALL_ATTEMPTS_PER_ROUND ? { kind: 'nobodyHome', until: now() + LOCK_MS } : { kind: 'ready' }
+    if (callAttempts >= CALL_ATTEMPTS_PER_ROUND) {
+      clearTimeout(cooldownTimer)
+      v.call = { kind: 'nobodyHome', until: now() + LOCK_MS }
+      return
+    }
+    const until = now() + CALL_COOLDOWN_MS
+    v.call = { kind: 'cooldown', until }
+    scheduleCooldownEnd(until)
   }
   const scheduleCooldownEnd = (until: number) => {
     clearTimeout(cooldownTimer)
@@ -154,8 +158,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   }
   const connect = () => {
     const v = view()
-    clearTimeout(ringTimer)
-    v.outgoing = null
+    v.outgoing = false
     v.incoming = false
     v.inCall = true
     v.call = { kind: 'ready' }
@@ -232,8 +235,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       if (mode === 'off') {
         if (v.inCall) return hangUp('hangup')
         if (v.outgoing) {
-          clearTimeout(ringTimer)
-          v.outgoing = null
+          v.outgoing = false
           state.lastCallEnded = 'cancelled'
           finishAttempt()
         }
@@ -246,13 +248,10 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
           state.missedCall = null
           connect()
         } else if (v.peerPaired && v.call.kind === 'ready') {
+          // Voice room: we wait for her as long as we like; no ring timeout.
           state.missedCall = null
-          const until = now() + CALL_COOLDOWN_MS
           callAttempts++
-          v.outgoing = { until }
-          v.call = { kind: 'cooldown', until }
-          scheduleCooldownEnd(until)
-          ringTimer = setTimeout(() => dev.ringTimeout(), until - now())
+          v.outgoing = true
         } else return
         state.myMode = 'audio'
         state.videoUnlockAt = now() + VIDEO_UNLOCK_MS
@@ -372,22 +371,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       const v = view()
       if (v.outgoing) connect()
     },
-    ringTimeout() {
-      const v = view()
-      if (v.incoming) {
-        missed()
-        v.incoming = false
-        state.peerMode = 'off'
-        end('timeout')
-        return
-      }
-      if (!v.outgoing) return
-      clearTimeout(ringTimer)
-      v.outgoing = null
-      endCall()
-      end('timeout')
-      finishAttempt()
-    },
     peerHangsUp() {
       hangUp('hangup')
     },
@@ -451,7 +434,7 @@ function baseView(self: Side, peerPaired: boolean): RoomView {
     call: { kind: 'ready' },
     ping: { kind: 'ready' },
     incoming: false,
-    outgoing: null,
+    outgoing: false,
     inCall: false,
   }
 }

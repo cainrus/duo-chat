@@ -30,7 +30,7 @@ const elapsed = computed(() => mmss(startedAt.value ? now.value - startedAt.valu
 /** Recomputed when the server view changes; CountDown ticks by itself. */
 const msLeft = (until: number) => Math.max(0, until - Date.now())
 
-// A soft repeating chime while her call rings towards us.
+// A soft repeating chime while she waits for us (it stops by itself after a minute).
 let stopRing: (() => void) | null = null
 watch(
   calling,
@@ -51,10 +51,7 @@ onScopeDispose(() => stopRing?.())
         <template v-if="view?.inCall">
           <span class="status-live">{{ elapsed }}</span>
         </template>
-        <template v-else-if="view?.outgoing">
-          <span>звоним…</span>
-          <van-count-down :time="msLeft(view.outgoing.until)" format="mm:ss" class="status-timer" />
-        </template>
+        <span v-else-if="view?.outgoing" data-test="waiting">ждём {{ peerName }}…</span>
         <span v-else-if="calling" class="status-calling" data-test="peer-calling">{{ peerName }} зовёт</span>
         <template v-else-if="view?.call.kind === 'cooldown'">
           <span class="status-muted">снова через</span>

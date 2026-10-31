@@ -42,9 +42,9 @@ describe('call switch in the chat', () => {
     await seg('audio').trigger('click')
     await nextTick()
     expect(session.state.myMode).toBe('audio')
-    expect(session.state.view!.outgoing).not.toBeNull()
+    expect(session.state.view!.outgoing).toBe(true)
     expect(seg('audio').attributes('aria-checked')).toBe('true')
-    expect(status()).toContain('звоним')
+    expect(status()).toContain('ждём Соня…')
     expect(disabled('video')).toBe(true)
     expect(wrapper.find('[data-test="video-lock"]').exists()).toBe(true)
 
@@ -55,7 +55,7 @@ describe('call switch in the chat', () => {
     await seg('off').trigger('click')
     await nextTick()
     expect(session.state.myMode).toBe('off')
-    expect(session.state.view!.outgoing).toBeNull()
+    expect(session.state.view!.outgoing).toBe(false)
   })
 
   it('her call: AUDIO glows as «Подключиться», a soft ring plays, no decline anywhere; tapping AUDIO joins', async () => {
@@ -79,12 +79,12 @@ describe('call switch in the chat', () => {
     expect(ring.stops).toBe(before.stops + 1)
   })
 
-  it('her call ringing out stops the ring', async () => {
+  it('she stops waiting: the ring stops', async () => {
     const { session } = mountChat()
     const before = { ...ring }
     session.dev.incoming()
     await nextTick()
-    session.dev.ringTimeout()
+    session.dev.peerCancels()
     await nextTick()
     expect(ring.stops).toBe(before.stops + 1)
   })

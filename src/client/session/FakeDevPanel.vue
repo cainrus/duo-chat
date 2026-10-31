@@ -58,9 +58,8 @@ const groups: { title: string; items: Btn[] }[] = [
     title: 'Звонки',
     items: [
       { label: 'Она звонит 📞', run: () => dev.incoming() },
-      { label: 'Она перестала звать (пропущен)', run: () => dev.peerCancels() },
+      { label: 'Она перестала ждать (пропущен)', run: () => dev.peerCancels() },
       { label: 'Она подключилась', run: () => dev.peerAccepts() },
-      { label: 'Не подключилась (минута)', run: () => dev.ringTimeout() },
       { label: 'Пропущенный из пуша', run: () => dev.missedFromPush() },
       { label: 'Она: звук', run: () => dev.peerMode('audio') },
       { label: 'Она: видео', run: () => dev.peerMode('video') },

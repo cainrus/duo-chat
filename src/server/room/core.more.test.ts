@@ -124,9 +124,12 @@ describe('room: call rules across both sides', () => {
     room.connect('a', T0)
     room.handle('a', { t: 'call' }, T0)
     room.handle('a', { t: 'callCancel' }, T0 + 1)
-    room.handle('a', { t: 'call' }, T0 + 2)
-    const fx = room.handle('a', { t: 'callCancel' }, T0 + 3)
-    expect(lastView(fx, 'a')!.call).toEqual({ kind: 'nobodyHome', until: T0 + 3 + LOCK_MS })
+    // The pause after the first attempt.
+    expect(sends(room.handle('a', { t: 'call' }, T0 + 2), 'a')).toContainEqual({ t: 'error', code: 'not-allowed' })
+    const t = T0 + 1 + CALL_COOLDOWN_MS
+    room.handle('a', { t: 'call' }, t)
+    const fx = room.handle('a', { t: 'callCancel' }, t + 1)
+    expect(lastView(fx, 'a')!.call).toEqual({ kind: 'nobodyHome', until: t + 1 + LOCK_MS })
   })
 
   it('merging simultaneous calls resets both sides', () => {
@@ -146,9 +149,9 @@ describe('room: call rules across both sides', () => {
     room.handle('a', { t: 'ping' }, T0)
     room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS)
     room.handle('a', { t: 'call' }, T0 + CALL_COOLDOWN_MS)
-    room.alarm(T0 + 2 * CALL_COOLDOWN_MS)
-    room.handle('a', { t: 'call' }, T0 + 2 * CALL_COOLDOWN_MS)
-    room.alarm(T0 + 3 * CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'callCancel' }, T0 + 2 * CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'call' }, T0 + 3 * CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'callCancel' }, T0 + 3 * CALL_COOLDOWN_MS)
     const t = T0 + 3 * CALL_COOLDOWN_MS + 1
     expect(room.view('a', t).call.kind).toBe('nobodyHome')
     expect(room.view('a', t).ping.kind).toBe('exhausted')
@@ -160,23 +163,21 @@ describe('room: call rules across both sides', () => {
     expect(room.view('a', t + 1).call).toEqual({ kind: 'ready' })
   })
 
-  it('an overdue ringing call is closed before the next event is handled', () => {
+  it('a call still waiting after a long time is not closed by other events', () => {
     room.connect('a', T0)
     room.handle('a', { t: 'call' }, T0)
-    // The alarm was late; a ping arrives after the cooldown.
-    const fx = room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS + 5)
-    expect(sends(fx, 'a')).toContainEqual({ t: 'callEnded', reason: 'timeout' })
-    expect(lastView(fx, 'a')!.outgoing).toBeNull()
-    expect(room.state.sides.a.call.attemptsLeft).toBe(1)
+    const fx = room.handle('a', { t: 'ping' }, T0 + 60 * 60_000)
+    expect(sends(fx, 'a').some((m) => m.t === 'callEnded')).toBe(false)
+    expect(lastView(fx, 'a')!.outgoing).toBe(true)
   })
 
   it('schedules an alarm when the 24h lock lifts', () => {
     room.connect('a', T0)
     room.handle('a', { t: 'call' }, T0)
     room.handle('a', { t: 'callCancel' }, T0)
-    room.handle('a', { t: 'call' }, T0)
-    room.handle('a', { t: 'callCancel' }, T0)
-    expect(room.nextAlarmAt(T0)).toBe(T0 + LOCK_MS)
+    room.handle('a', { t: 'call' }, T0 + CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'callCancel' }, T0 + CALL_COOLDOWN_MS)
+    expect(room.nextAlarmAt(T0 + CALL_COOLDOWN_MS)).toBe(T0 + CALL_COOLDOWN_MS + LOCK_MS)
   })
 })
 

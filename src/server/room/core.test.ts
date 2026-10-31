@@ -35,7 +35,7 @@ describe('room: presence and views', () => {
     expect(v.call).toEqual({ kind: 'ready' })
     expect(v.ping).toEqual({ kind: 'ready' })
     expect(v.incoming).toBe(false)
-    expect(v.outgoing).toBeNull()
+    expect(v.outgoing).toBe(false)
     expect(v.inCall).toBe(false)
   })
 
@@ -75,13 +75,14 @@ describe('room: signaling relay', () => {
 })
 
 describe('room: calls', () => {
-  it('pushes a call to an absent friend and shows the caller a ringing state', () => {
+  it('pushes a call to an absent friend once and shows the caller waiting', () => {
     room.connect('a', T0)
     const fx = room.handle('a', { t: 'call' }, T0)
     expect(pushes(fx, 'b')).toEqual([{ kind: 'call' }])
-    const v = lastView(fx, 'a')!
-    expect(v.outgoing).toEqual({ until: T0 + CALL_COOLDOWN_MS })
-    expect(v.call).toEqual({ kind: 'cooldown', until: T0 + CALL_COOLDOWN_MS })
+    expect(lastView(fx, 'a')!.outgoing).toBe(true)
+    expect(room.state.sides.a.call.attemptsLeft).toBe(1)
+    // No repeats while she waits.
+    expect(pushes(room.alarm(T0 + 30 * 60_000), 'b')).toEqual([])
   })
 
   it('rings in the app, without push, when the friend is connected', () => {
@@ -107,36 +108,46 @@ describe('room: calls', () => {
     expect(lastView(fx, 'a')!.inCall).toBe(true)
     expect(lastView(fx, 'b')!.inCall).toBe(true)
     expect(lastView(fx, 'a')!.call).toEqual({ kind: 'ready' })
-    expect(lastView(fx, 'a')!.outgoing).toBeNull()
+    expect(lastView(fx, 'a')!.outgoing).toBe(false)
   })
 
-  it('rings for one minute; nobody joining is an unanswered attempt at the timeout', () => {
+  it('voice room: no ring timeout; the caller waits while her app is visible', () => {
+    room.connect('a', T0)
+    room.connect('b', T0)
+    room.handle('a', { t: 'call' }, T0)
+    // Nothing is scheduled for the call itself (only b's presence and the like).
+    expect(room.nextAlarmAt(T0)).toBeNull()
+    const later = T0 + 2 * 60 * 60_000
+    const fx = room.alarm(later)
+    expect(sends(fx, 'a').some((m) => m.t === 'callEnded')).toBe(false)
+    expect(room.view('a', later).outgoing).toBe(true)
+    expect(room.view('b', later).incoming).toBe(true)
+  })
+
+  it('giving up is an unanswered attempt and starts the one-minute pause', () => {
     expect(CALL_COOLDOWN_MS).toBe(60_000)
     room.connect('a', T0)
     room.connect('b', T0)
     room.handle('a', { t: 'call' }, T0)
-    expect(room.nextAlarmAt(T0)).toBe(T0 + CALL_COOLDOWN_MS)
-    expect(room.view('b', T0 + CALL_COOLDOWN_MS - 1).incoming).toBe(true)
-    const fx = room.alarm(T0 + CALL_COOLDOWN_MS)
-    expect(sends(fx, 'a')).toContainEqual({ t: 'callEnded', reason: 'timeout' })
-    expect(sends(fx, 'b')).toContainEqual({ t: 'callEnded', reason: 'timeout' })
-    expect(lastView(fx, 'a')!.outgoing).toBeNull()
+    const t = T0 + 10 * 60_000
+    const fx = room.handle('a', { t: 'callCancel' }, t)
+    expect(sends(fx, 'a')).toContainEqual({ t: 'callEnded', reason: 'cancelled' })
+    expect(sends(fx, 'b')).toContainEqual({ t: 'callEnded', reason: 'cancelled' })
     expect(lastView(fx, 'b')!.incoming).toBe(false)
-    // One of the two attempts is used; the button is ready for the second.
-    expect(lastView(fx, 'a')!.call).toEqual({ kind: 'ready' })
-    expect(room.state.sides.a.call.attemptsLeft).toBe(1)
+    expect(lastView(fx, 'a')!.call).toEqual({ kind: 'cooldown', until: t + CALL_COOLDOWN_MS })
+    expect(room.nextAlarmAt(t)).toBe(t + CALL_COOLDOWN_MS)
+    expect(lastView(room.alarm(t + CALL_COOLDOWN_MS), 'a')!.call).toEqual({ kind: 'ready' })
   })
 
   it('has no decline: the callee cannot end a ringing call', () => {
     room.connect('a', T0)
     room.connect('b', T0)
     room.handle('a', { t: 'call' }, T0)
-    // "end" from the callee while it rings changes nothing; the call keeps ringing.
+    // "end" from the callee while she is called changes nothing; the caller keeps waiting.
     const fx = room.handle('b', { t: 'callEnd' }, T0 + 5)
     expect(sends(fx, 'a').some((m) => m.t === 'callEnded')).toBe(false)
-    expect(lastView(fx, 'a')!.outgoing).toEqual({ until: T0 + CALL_COOLDOWN_MS })
+    expect(lastView(fx, 'a')!.outgoing).toBe(true)
     expect(lastView(fx, 'b')!.incoming).toBe(true)
-    expect(lastView(fx, 'a')!.call).toEqual({ kind: 'cooldown', until: T0 + CALL_COOLDOWN_MS })
   })
 
   it('the caller hiding the app cancels the call', () => {
@@ -151,9 +162,10 @@ describe('room: calls', () => {
   it('two unanswered calls lead to "nobody\'s home", and a callback lifts it', () => {
     room.connect('a', T0)
     room.handle('a', { t: 'call' }, T0)
-    room.alarm(T0 + CALL_COOLDOWN_MS)
-    room.handle('a', { t: 'call' }, T0 + CALL_COOLDOWN_MS)
-    room.alarm(T0 + 2 * CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'callCancel' }, T0 + 1)
+    room.handle('a', { t: 'call' }, T0 + 1 + CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'visibility', visible: false }, T0 + 2 * CALL_COOLDOWN_MS)
+    room.handle('a', { t: 'visibility', visible: true }, T0 + 2 * CALL_COOLDOWN_MS)
     const t = T0 + 2 * CALL_COOLDOWN_MS
     expect(room.view('a', t).call.kind).toBe('nobodyHome')
     expect(room.handle('a', { t: 'call' }, t)).toContainEqual({
@@ -166,7 +178,7 @@ describe('room: calls', () => {
     const fx = room.handle('b', { t: 'call' }, t + 10)
     // Unlocked as soon as she calls back, whether or not the callback is joined.
     expect(lastView(fx, 'a')!.call).toEqual({ kind: 'ready' })
-    const ended = room.alarm(t + 10 + CALL_COOLDOWN_MS)
+    const ended = room.handle('b', { t: 'callCancel' }, t + 20)
     expect(lastView(ended, 'a')!.call).toEqual({ kind: 'ready' })
   })
 

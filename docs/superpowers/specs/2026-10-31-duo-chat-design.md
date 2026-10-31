@@ -4,7 +4,7 @@ Date: 2026-10-31. Status: draft, awaiting owner approval.
 
 ## Intent and why
 
-A private chat and voice/video calling app for exactly two people: the owner's
+A private chat and calling app for exactly two people: the owner's
 6-year-old daughter and her friend (also 6). Like Telegram, but nothing to
 install from a store and nobody else in it. The friend's family does not use
 Telegram. The web was chosen as the one platform that covers both devices.
@@ -26,14 +26,14 @@ non-technical parent with an AI assistant.
 1. **Text chat with emoji** is the home screen. Two people, one conversation.
    Messages are ephemeral (1 hour) and never push; a ping button calls the
    friend into the chat.
-2. **Voice call** and **video call** buttons in the chat. During a voice call,
-   video can be switched on and off. During any call you can switch to the
-   text/emoji chat view and the audio keeps going. Every mode has an
-   "end call" button.
+2. **Calls without pressure** (owner, 2026-10-31): one call switch per side,
+   OFF | AUDIO | VIDEO, in the chat. Calls are voice; video only when both
+   chose it. No decline, no ring timeout, no call screen: the call happens
+   inside the chat, which stays usable. See "Call switch and voice room".
 3. **Calling a friend who is not in the app** sends a push notification
    ("<name> is calling you"). No ringing phone-style screen with a ringtone
    when the app is closed: the notification is enough. When the callee has the
-   app open, they see an incoming call and can accept it.
+   app open, her AUDIO button glows and a soft chime plays; tapping it joins.
 4. **Anti-spam on calling** (owner's rules, see "Call attempt rules").
 5. **Installable as a PWA**: an icon on the home screen, push notifications.
 6. **Public repo written for review**: plain-language explanation of what data
@@ -62,27 +62,62 @@ non-technical parent with an AI assistant.
   attempt rules exist for this.
 - Security claims in the README that the code does not back up.
 
-## Call attempt rules (owner's design)
+## Call switch and voice room (owner's decisions, 2026-10-31)
+
+The owner changed the call design to remove any pressure between the kids.
+
+- **One switch per side: OFF | AUDIO | VIDEO.** Each side sets only its own;
+  what both get is the lower of the two. Tapping is the only control: there is
+  no separate accept, decline, mute, camera or end button.
+- **From OFF only AUDIO.** VIDEO is disabled while OFF and stays locked for
+  3 seconds after AUDIO turned on (`VIDEO_UNLOCK_MS`), shown with a lock, so a
+  mis-tap never lands a kid in video.
+- **Voice room ("huddle") model.** My AUDIO while the friend is OFF means I
+  enter the call and wait for her. I stay as long as my app is visible: no
+  ring timeout. The moment my page is hidden (screen off, app switched, tab
+  hidden, page closed) while I am still alone, my switch goes to OFF and the
+  server cancels the call. My side shows a soft «ждём <имя>…».
+- **Joining.** While I wait, her AUDIO glows with «<имя> зовёт» and a soft
+  WebAudio chime repeats (it stops by itself after a minute; the glow stays;
+  no animation under prefers-reduced-motion). Her tapping AUDIO joins. There
+  is **no decline**: not joining is the answer, and nothing tells me she saw it.
+- **Microphone only when both are in.** No getUserMedia while I only wait (no
+  mic light). The mic opens when the server reports the call connected, and
+  goes to the direct link then. If the mic cannot be opened, the error shows
+  and the call ends cleanly.
+- **Video only when both are on VIDEO.** The switch position travels device to
+  device over the data channel (`{ t: 'mode' }`, on change, on connect and on
+  channel reopen), never through the server. Choosing VIDEO is one-sided and
+  silent: the friend sees no prompt, highlight or hint, and neither do I;
+  they ask each other by voice. When both are on VIDEO, both cameras open and
+  video shows. When either leaves VIDEO, both cameras stop (light off) and
+  their tracks are removed: back to voice. VIDEO -> AUDIO keeps the call.
+- **Ending.** Either side going OFF ends the call for both; both switches
+  return to OFF. Once connected, hiding the page does not end the call (Android
+  keeps the audio in the background); only OFF or a lost connection does.
+
+### Call attempt rules (owner's design)
 
 Per caller, state machine on the server (the client only displays it):
 
-1. Caller presses voice or video → push to the other side. The call button
-   locks for a **cooldown** (my call: 2 minutes). If the callee opens the app
-   during the cooldown, they see the incoming call.
-2. After the cooldown the caller may call **once more** (same push, same
-   cooldown).
-3. Still no answer → the button shows **"nobody's home"** (icon + short
-   text) and is locked.
+1. Caller enters the voice room → one push to the other side (no repeats).
+   The attempt counts at entry.
+2. When the caller leaves without the friend joining (OFF, app hidden or
+   closed), the AUDIO position pauses for a **cooldown** of 1 minute
+   (`CALL_COOLDOWN_MS`, owner 2026-10-31). After it the caller may enter
+   **once more**.
+3. Still no answer → AUDIO shows **"nobody's home"** (icon + short text) and
+   is locked.
 4. The lock lifts when the other side calls back — whether or not the caller
-   accepts that callback. After that the caller gets **one** attempt; if it is
+   joins that callback. After that the caller gets **one** attempt; if it is
    not answered, the button locks again.
 5. Any lock lifts on its own **24 hours** after it started. After a 24h
    unlock the caller gets the full two attempts again.
 6. A call that is answered resets everything for both sides.
 
-My calls inside this: "answered" means the callee accepted the call; a text
-message from the other side does not unlock (only a callback does, as the
-owner said). Cooldown length lives in one config constant.
+My calls inside this: "answered" means the callee joined; a text message from
+the other side does not unlock (only a callback does, as the owner said).
+Cooldown length lives in one config constant.
 
 ### Presence (owner's rule)
 
@@ -121,7 +156,7 @@ owner said). Cooldown length lives in one config constant.
 ### Ping button (owner's rules)
 
 A "come to the chat" button. It is how you call someone into the chat without
-a voice/video call.
+a call.
 
 - If the other side is present: an in-app nudge (sound + animation), no push,
   not counted.
@@ -138,32 +173,32 @@ a voice/video call.
 
 Ping pushes and call pushes are counted separately.
 
-### Ringing lifecycle (my calls)
+### Waiting lifecycle (voice room)
 
-- A call is a server-side pending call that lives at most until the caller's
-  cooldown ends. The caller sees a "calling…" screen and can cancel.
-- If the caller leaves the app or cancels, the pending call ends. No push goes
-  back to the caller ("X answered" is out of scope).
-- A callee who opens the app after the call ended (e.g. from a stale push)
-  lands in the chat with a "missed call" marker and a big call-back button.
-- Decline counts as an unanswered attempt and ends the caller's cooldown early
-  (the caller sees "busy" at once instead of waiting).
-- A cancelled call counts as an attempt too, so cancelling is not a way
-  around the rules.
-- Both sides call at the same moment → the calls merge into one connected
+- A call is a server-side pending call with no timeout: it lives while the
+  caller waits (app visible, socket open). The caller leaves by going OFF;
+  hiding or closing the app, or a dropped socket, also ends it.
+- No push goes back to the caller ("X answered" is out of scope).
+- A callee who opens the app after the caller left (e.g. from a stale push)
+  lands in the chat with a "missed call" marker and a call-back button.
+- Leaving before the friend joined counts as an attempt, so leaving is not a
+  way around the rules. There is no decline and no "busy".
+- Both sides enter at the same moment → the calls merge into one connected
   call, which counts as answered.
 - Both sides locked at once: they wait for the 24h timer. Accepted as rare.
 
 ## Screens (all icon-first, big touch targets)
 
-- **Chat** (home): message list, input with a large emoji picker, three big
-  buttons: ping, voice, video. Call and ping buttons show their state
-  (countdown / "nobody's home" / pushes used up). My call (owner did not
-  answer): a "friend is here" indicator, since presence decides whether a
-  ping pushes and whether messages can go out now.
-- **Incoming call** (app open): friend's avatar, accept / decline.
-- **In call**: remote video (or avatar in voice mode), small self-view,
-  buttons: mute, camera on/off, switch to chat, end call.
+- **Chat** — the only screen after setup (owner, 2026-10-31: "always start in
+  the chat"). Header with the friend and a "friend is here" indicator (my
+  call: presence decides whether a ping pushes and whether messages can go
+  out now). Under it a compact call bar: the call switch, one status line
+  («ждём <имя>…», «<имя> зовёт», the call timer, the cooldown countdown or
+  «никого нет») and the ping button (shows "pushes used up"). While both are
+  on VIDEO, a video block (friend big, me small) sits above the messages. The
+  message list and the input with a large emoji picker stay usable during a
+  call; the friend's audio keeps playing. No incoming popup, no full-screen
+  call view, no floating "back to call" bubble.
 - **Setup** (adult, one time): pairing via secret link or QR, "add to home
   screen" instructions for iPad, notification permission request (iOS needs it
   triggered by a tap inside the installed PWA).

@@ -61,7 +61,7 @@ function scrollToEnd() {
   })
 }
 onMounted(scrollToEnd)
-watch([() => s.messages.length, emojiOpen], scrollToEnd)
+watch([() => s.messages.length, emojiOpen, () => s.media.videoOn], scrollToEnd)
 
 // What became of our ping: a short toast, so pressing it is never silent.
 const PING_NOTES: Record<PingResult, string> = {

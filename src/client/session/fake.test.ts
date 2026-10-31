@@ -9,22 +9,23 @@ describe('fake session', () => {
 
   const make = () => createFakeSession({ latency: 0, autoReply: false })
 
-  it('two unanswered calls end in "nobody\'s home"', async () => {
+  it('voice room: we wait with no timeout; giving up twice ends in "nobody\'s home"', async () => {
     const s = make()
     const v = () => s.state.view!
     await s.setMode('audio')
     expect(s.state.myMode).toBe('audio')
-    expect(v().outgoing?.until).toBe(Date.now() + CALL_COOLDOWN_MS)
-    expect(v().call.kind).toBe('cooldown')
+    expect(v().outgoing).toBe(true)
+    await vi.advanceTimersByTimeAsync(30 * 60_000)
+    expect(v().outgoing).toBe(true)
 
+    await s.setMode('off')
+    expect(s.state.lastCallEnded).toBe('cancelled')
+    expect(v().call.kind).toBe('cooldown')
     await vi.advanceTimersByTimeAsync(CALL_COOLDOWN_MS)
-    expect(v().outgoing).toBeNull()
-    expect(s.state.lastCallEnded).toBe('timeout')
-    expect(s.state.myMode).toBe('off')
     expect(v().call.kind).toBe('ready')
 
     await s.setMode('audio')
-    s.dev.ringTimeout()
+    await s.setMode('off')
     expect(v().call.kind).toBe('nobodyHome')
   })
 
@@ -41,10 +42,10 @@ describe('fake session', () => {
     expect(s.state).toMatchObject({ myMode: 'off', peerMode: 'off' })
   })
 
-  it('her call nobody joins rings out as missed', () => {
+  it('her call she stops waiting in is missed', () => {
     const s = make()
     s.dev.incoming()
-    s.dev.ringTimeout()
+    s.dev.peerCancels()
     expect(s.state.view!.incoming).toBe(false)
     expect(s.state.peerMode).toBe('off')
     expect(s.state.missedCall).not.toBeNull()

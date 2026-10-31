@@ -1,7 +1,7 @@
 // The Durable Object glue, run in Node against a fake Workers runtime:
 // hibernation sockets with attachments, KV storage, alarms.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PRESENCE_GRACE_MS } from '@shared/constants'
+import { CALL_COOLDOWN_MS, PRESENCE_GRACE_MS } from '@shared/constants'
 import type { ServerToClient } from '@shared/protocol'
 import { toBase64url } from '../base64url'
 
@@ -246,9 +246,11 @@ describe('PairRoom: sockets', () => {
     const wa = await open()
     await hello(wa, ta)
     await msg(wa, { t: 'call' })
-    const stored = ctx.storage.data.get('room') as { pendingCall: unknown }
-    expect(stored.pendingCall).toMatchObject({ from: 'a' })
-    expect(ctx.storage.alarm).not.toBeNull()
+    await msg(wa, { t: 'callCancel' })
+    const stored = ctx.storage.data.get('room') as { sides: { a: { call: { cooldownUntil: number } } } }
+    expect(stored.sides.a.call.cooldownUntil).toBe(now + CALL_COOLDOWN_MS)
+    // The pause after the attempt ends on its own: an alarm is scheduled for it.
+    expect(ctx.storage.alarm).toBe(now + CALL_COOLDOWN_MS)
   })
 
   it('closes a socket that never says hello', async () => {

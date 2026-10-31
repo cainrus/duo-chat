@@ -175,7 +175,7 @@ const view = (over: Partial<RoomView> = {}): RoomView => ({
   call: { kind: 'ready' },
   ping: { kind: 'ready' },
   incoming: false,
-  outgoing: null,
+  outgoing: false,
   inCall: false,
   ...over,
 })
@@ -775,7 +775,7 @@ describe('live session: call switch', () => {
     expect(h.link().sentOf('call')).toEqual([{ t: 'call' }])
     expect(h.session.state.myMode).toBe('audio')
     expect(h.session.state.videoUnlockAt).toBe(T0 + VIDEO_UNLOCK_MS)
-    h.link().deliver({ t: 'view', view: view({ outgoing: { until: T0 + 1 } }) })
+    h.link().deliver({ t: 'view', view: view({ outgoing: true }) })
     await flush()
     // No mic light while it only rings.
     expect(h.media.constraints).toEqual([])
@@ -825,10 +825,10 @@ describe('live session: call switch', () => {
     expect(h.session.state.peerMode).toBe('off')
   })
 
-  it('her call that stops ringing puts her back to OFF', async () => {
+  it('her call she stops waiting in puts her back to OFF', async () => {
     const h = await ready()
     h.link().deliver({ t: 'view', view: view({ incoming: true }) })
-    h.link().deliver({ t: 'callEnded', reason: 'timeout' })
+    h.link().deliver({ t: 'callEnded', reason: 'cancelled' })
     h.link().deliver({ t: 'view', view: view() })
     expect(h.session.state.peerMode).toBe('off')
   })
@@ -836,20 +836,34 @@ describe('live session: call switch', () => {
   it('OFF while ringing cancels; it never touched the mic', async () => {
     const h = await ready()
     await h.session.setMode('audio')
-    h.link().deliver({ t: 'view', view: view({ outgoing: { until: T0 + 1 } }) })
+    h.link().deliver({ t: 'view', view: view({ outgoing: true }) })
     await h.session.setMode('off')
     expect(h.link().sentOf('callCancel')).toHaveLength(1)
     expect(h.session.state.myMode).toBe('off')
     expect(h.media.constraints).toEqual([])
   })
 
-  it('our call that rings out unanswered puts our switch back to OFF', async () => {
+  it('voice room: hiding the app while we wait alone leaves (OFF + callCancel)', async () => {
     const h = await ready()
     await h.session.setMode('audio')
-    h.link().deliver({ t: 'view', view: view({ outgoing: { until: T0 + 1 } }) })
-    h.link().deliver({ t: 'callEnded', reason: 'timeout' })
-    h.link().deliver({ t: 'view', view: view({ call: { kind: 'ready' } }) })
+    h.link().deliver({ t: 'view', view: view({ outgoing: true }) })
+    h.page.emit(false)
+    expect(h.link().sentOf('callCancel')).toHaveLength(1)
     expect(h.session.state).toMatchObject({ myMode: 'off', videoUnlockAt: null })
+    // The server's answer changes nothing more.
+    h.link().deliver({ t: 'callEnded', reason: 'cancelled' })
+    h.link().deliver({ t: 'view', view: view({ call: { kind: 'cooldown', until: T0 + 60_000 } }) })
+    expect(h.session.state.myMode).toBe('off')
+  })
+
+  it('voice room: a connected call keeps going while the app is hidden', async () => {
+    const h = await ready()
+    await connected(h)
+    h.page.emit(false)
+    expect(h.link().sentOf('callCancel')).toEqual([])
+    expect(h.link().sentOf('callEnd')).toEqual([])
+    expect(h.session.state.myMode).toBe('audio')
+    expect(h.media.streams[0]!.getTracks().every((t) => t.readyState === 'live')).toBe(true)
   })
 
   it('a refused call puts our switch back to OFF', async () => {
@@ -1125,14 +1139,14 @@ describe('live session: missed calls', () => {
     expect(h.session.state.missedCall).toBeNull()
   })
 
-  it('a call that rang out without us joining is missed', async () => {
+  it('a call she waited in for a long time without us joining is missed', async () => {
     h = harness({ config })
     await h.session.ready
     h.link().deliver({ t: 'view', view: view({ incoming: true }) })
-    h.clock.now = T0 + 60_000
-    h.link().deliver({ t: 'callEnded', reason: 'timeout' })
+    h.clock.now = T0 + 30 * 60_000
+    h.link().deliver({ t: 'callEnded', reason: 'cancelled' })
     h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toEqual({ at: T0 + 60_000 })
+    expect(h.session.state.missedCall).toEqual({ at: T0 + 30 * 60_000 })
   })
 
   it('opened from a call notification after the call is gone: missed', async () => {

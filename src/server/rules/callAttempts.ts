@@ -7,13 +7,11 @@ import type { CallButtonView } from '@shared/types'
 export type CallAttemptState = {
   /** Calls left before "nobody's home". Starts at CALL_ATTEMPTS_PER_ROUND. */
   attemptsLeft: number
-  /** Button is in cooldown until this time (a call may be ringing). */
+  /** Pause after an unanswered call: the button is in cooldown until this time. */
   cooldownUntil: number | null
   /** "Nobody's home" since this time; lifts on a callback or after LOCK_MS. */
   lockedSince: number | null
 }
-
-export type UnansweredReason = 'timeout' | 'cancelled'
 
 export function initialCallAttempts(): CallAttemptState {
   return { attemptsLeft: CALL_ATTEMPTS_PER_ROUND, cooldownUntil: null, lockedSince: null }
@@ -32,26 +30,21 @@ export function canCall(s: CallAttemptState, now: number): boolean {
   return n.lockedSince === null && n.cooldownUntil === null && n.attemptsLeft > 0
 }
 
-/** Throws if !canCall. Uses one attempt and starts the cooldown. */
+/** Throws if !canCall. Uses one attempt at entry (the caller then waits as long as she likes). */
 export function onCallPlaced(s: CallAttemptState, now: number): CallAttemptState {
   if (!canCall(s, now)) throw new Error('call not allowed now')
   const n = normalizeCallAttempts(s, now)
-  return { attemptsLeft: n.attemptsLeft - 1, cooldownUntil: now + CALL_COOLDOWN_MS, lockedSince: null }
+  return { attemptsLeft: n.attemptsLeft - 1, cooldownUntil: null, lockedSince: null }
 }
 
 /**
- * The pending call ended without being accepted.
- * 'cancelled' ends the cooldown at `now`; 'timeout' happens at cooldown end.
- * With no attempts left the button locks ("nobody's home").
+ * The caller stopped waiting before the friend joined. With an attempt left, the button pauses
+ * for CALL_COOLDOWN_MS; with none, it locks ("nobody's home").
  */
-export function onCallUnanswered(
-  s: CallAttemptState,
-  now: number,
-  _reason: UnansweredReason,
-): CallAttemptState {
-  // Every reason ends the cooldown at `now` (a timeout is called exactly at its end).
-  const n = { ...normalizeCallAttempts(s, now), cooldownUntil: null }
-  return n.attemptsLeft <= 0 ? { ...n, lockedSince: now } : n
+export function onCallUnanswered(s: CallAttemptState, now: number): CallAttemptState {
+  const n = normalizeCallAttempts(s, now)
+  if (n.attemptsLeft <= 0) return { ...n, cooldownUntil: null, lockedSince: now }
+  return { ...n, cooldownUntil: now + CALL_COOLDOWN_MS }
 }
 
 /** A call involving this side connected: everything resets. */

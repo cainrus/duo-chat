@@ -14,7 +14,6 @@ import {
   onCallPlaced,
   onCallUnanswered,
   type CallAttemptState,
-  type UnansweredReason,
 } from '../rules/callAttempts'
 import { decidePing, initialPingPushes, onPingReply, pingButtonView, pingChangesAt, type PingPushState } from '../rules/pingPushes'
 import { initialPresence, isPresent, presenceExpiresAt, setActive, type PresenceState } from '../rules/presence'
@@ -32,11 +31,12 @@ export type SideState = {
 export type RoomState = {
   sides: Record<Side, SideState>
   /**
-   * A call ringing from `from` to the other side, ending unanswered at `until`.
+   * `from` waits for the other side in the call ("voice room" model): no ring timeout; it ends
+   * when `from` cancels, hides the app or disconnects, or the other side joins.
    * `pushed`: the callee already got the push for this call (at most one per call).
    * Optional so that state persisted before the field existed still loads.
    */
-  pendingCall: { from: Side; until: number; pushed?: boolean } | null
+  pendingCall: { from: Side; pushed?: boolean } | null
   /** A call is connected. (State saved before calls became voice-only holds `{ kind }`: still truthy.) */
   activeCall: boolean
 }
@@ -91,21 +91,20 @@ export class RoomCore {
 
   /** An authenticated socket for `side` opened. The app starts visible. */
   connect(side: Side, now: number): Effect[] {
-    const fx = this.#tick(now)
     const s = this.#s.sides[side]
     s.connected = true
     s.visible = true
     this.#updatePresence(side, now)
-    return [...fx, ...this.#views(now)]
+    return this.#views(now)
   }
 
   disconnect(side: Side, now: number): Effect[] {
-    const fx = this.#tick(now)
+    const fx: Effect[] = []
     const s = this.#s.sides[side]
     s.connected = false
     this.#updatePresence(side, now)
-    // The caller left: the ringing stops (it still counts as an attempt).
-    if (this.#s.pendingCall?.from === side) fx.push(...this.#endPending('cancelled', now))
+    // The caller left: she stops waiting (it still counts as an attempt).
+    if (this.#s.pendingCall?.from === side) fx.push(...this.#endPending(now))
     // A dropped socket during a call ends it for the peer.
     if (this.#s.activeCall) fx.push(...this.#endActive())
     fx.push(...this.#pushRinging(now))
@@ -113,28 +112,26 @@ export class RoomCore {
   }
 
   handle(side: Side, msg: RoomInput, now: number): Effect[] {
-    const fx = this.#tick(now)
+    const fx: Effect[] = []
     const peer = otherSide(side)
     const me = this.#s.sides[side]
     const them = this.#s.sides[peer]
     const pending = this.#s.pendingCall
 
     switch (msg.t) {
-      // These two change no view; views go out only if the tick itself changed something.
-      case 'signal': {
-        const views = fx.length ? this.#views(now) : []
-        return [...fx, ...this.#send(peer, { t: 'signal', env: msg.env }), ...views]
-      }
+      // These two change no view.
+      case 'signal':
+        return this.#send(peer, { t: 'signal', env: msg.env })
 
-      case 'pushSubscribe': {
+      case 'pushSubscribe':
         me.pushSub = msg.sub
-        return fx.length ? [...fx, ...this.#views(now)] : fx
-      }
+        return []
 
       case 'visibility':
         me.visible = msg.visible
         this.#updatePresence(side, now)
-        if (!msg.visible && pending?.from === side) fx.push(...this.#endPending('cancelled', now))
+        // Waiting lasts only while the caller's app is visible.
+        if (!msg.visible && pending?.from === side) fx.push(...this.#endPending(now))
         break
 
       case 'call': {
@@ -152,7 +149,7 @@ export class RoomCore {
           break
         }
         me.call = onCallPlaced(me.call, now)
-        this.#s.pendingCall = { from: side, until: me.call.cooldownUntil!, pushed: false }
+        this.#s.pendingCall = { from: side, pushed: false }
         them.call = onCalledBack(them.call, now)
         them.ping = onPingReply()
         fx.push(...this.#pushRinging(now))
@@ -160,7 +157,7 @@ export class RoomCore {
       }
 
       case 'callCancel':
-        if (pending?.from === side) fx.push(...this.#endPending('cancelled', now))
+        if (pending?.from === side) fx.push(...this.#endPending(now))
         break
 
       case 'callAccept':
@@ -168,10 +165,10 @@ export class RoomCore {
         break
 
       case 'callEnd':
-        // Lenient: "end" while ringing means cancel for the caller. There is no decline: the
-        // callee simply does not join, and the call rings until its timeout.
+        // Lenient: "end" while waiting means cancel for the caller. There is no decline: the
+        // callee simply does not join, and the caller waits as long as she is in the app.
         if (this.#s.activeCall) fx.push(...this.#endActive())
-        else if (pending?.from === side) fx.push(...this.#endPending('cancelled', now))
+        else if (pending?.from === side) fx.push(...this.#endPending(now))
         break
 
       case 'ping': {
@@ -203,16 +200,14 @@ export class RoomCore {
     return [...fx, ...this.#views(now)]
   }
 
-  /** Time-driven transitions: call timeout, presence grace expiry. */
+  /** Time-driven transitions: presence grace expiry, cooldown and lock ends. */
   alarm(now: number): Effect[] {
-    return [...this.#tick(now), ...this.#pushRinging(now), ...this.#views(now)]
+    return [...this.#pushRinging(now), ...this.#views(now)]
   }
 
   /** Earliest time `alarm` has something to do, or null. */
   nextAlarmAt(now: number): number | null {
     const times: number[] = []
-    // An overdue call still needs processing, so it counts even if in the past.
-    if (this.#s.pendingCall) times.push(this.#s.pendingCall.until)
     for (const side of SIDES) {
       const s = this.#s.sides[side]
       for (const t of [presenceExpiresAt(s.presence), callChangesAt(s.call), pingChangesAt(s.ping)]) {
@@ -234,7 +229,7 @@ export class RoomCore {
       call: callButtonView(s.call, now),
       ping: pingButtonView(s.ping, now),
       incoming: pending?.from === peer,
-      outgoing: pending?.from === side ? { until: pending.until } : null,
+      outgoing: pending?.from === side,
       inCall: !!this.#s.activeCall,
     }
   }
@@ -267,20 +262,14 @@ export class RoomCore {
     s.presence = setActive(s.presence, s.connected && s.visible, now)
   }
 
-  /** Process an overdue ringing call (it ends unanswered at its own `until`). */
-  #tick(now: number): Effect[] {
-    const pending = this.#s.pendingCall
-    if (pending && now >= pending.until) return this.#endPending('timeout', pending.until)
-    return []
-  }
-
-  #endPending(reason: UnansweredReason, at: number): Effect[] {
+  /** The caller stopped waiting before the friend joined: an unanswered attempt. */
+  #endPending(at: number): Effect[] {
     const pending = this.#s.pendingCall
     if (!pending) return []
     this.#s.pendingCall = null
     const caller = this.#s.sides[pending.from]
-    caller.call = onCallUnanswered(caller.call, at, reason)
-    return this.#sendBoth({ t: 'callEnded', reason })
+    caller.call = onCallUnanswered(caller.call, at)
+    return this.#sendBoth({ t: 'callEnded', reason: 'cancelled' })
   }
 
   #answer(): void {

@@ -20,9 +20,7 @@ QR and `jsqr` for scanning it.
   are set through CSSOM (`style.setProperty`), which CSP does not block.
 - It's small: per-component imports, and the whole stylesheet is 196 KB raw
   (≈25–30 KB gzip). It ships a built-in `ru-RU` locale.
-- It already has our hard parts: full-screen `Popup` for the call screens, `CountDown`
-  for the call cooldown, a draggable `FloatingBubble` for self-view and "back to
-  call", plus `ActionSheet`, `showToast`, `showConfirmDialog`, `Steps`, `Grid` and
+- It already has our hard parts: `CountDown` for the call cooldown and ringing, plus `ActionSheet`, `showToast`, `showConfirmDialog`, `Steps`, `Grid` and
   `Tabs`.
 - Gaps: there is no chat-bubble component (we write one small `ChatBubble.vue` that
   uses only Vant tokens). Don't rely on Vant's icon font (see §5).
@@ -72,48 +70,20 @@ components, passed through each component's `#icon` slot.
   :style="{ height: '45%' }"` → `van-tabs swipeable sticky` (tab titles are emoji, no
   text) → `van-grid :column-num="6" square :border="false" clickable` →
   `van-grid-item @click="insert(e)"` with the emoji in the default slot at 40px.
-- Action row: `van-grid :column-num="3" :border="false"`, each cell holds a
-  `van-button round size="large"`:
-  - Ping: `type="warning"`.
-  - Voice: `type="primary"`.
-  - Video: `type="primary"` with the video icon.
-  - Cooldown: `:disabled="true"` plus `van-count-down :time="msLeft" format="mm:ss"`
-    in the button slot.
-  - "Nobody's home": `disabled`, house icon plus "никого нет".
+- Call bar under the header (calls live inside the chat; owner, 2026-10-31): one
+  segmented call switch OFF | AUDIO | VIDEO (`CallSwitch.vue`, plain `<button
+  role="radio">` segments on Vant tokens, Phosphor icons phone-slash / phone /
+  video-camera, 64×56 targets). Under it one status line: «звоним…» +
+  `van-count-down`, the call timer, «<имя> зовёт», «снова через» + countdown, or
+  «никого нет». The ping button sits at the right of the bar:
+  - Ping: `van-button round size="large" type="warning"`.
   - Ping pushes used up: `van-badge content="!"` plus a short "сегодня всё" label.
+  - Her call: the AUDIO segment glows (no glow under prefers-reduced-motion).
+  - VIDEO: disabled while OFF and for 3 s after AUDIO, with a small lock icon.
+- Video (only while both switches are on VIDEO): a rounded block above the messages,
+  her `<video>` big, ours small in the corner (`CallVideo.vue`).
 - Ping nudge received: `showToast({ message: '👋', icon: <bell>, position: 'top',
   duration: 1500 })`, plus a sound.
-
-**Calling (outgoing)**
-- `van-popup :show position="bottom" :overlay="false" :close-on-click-overlay="false"
-  safe-area-inset-top safe-area-inset-bottom :style="{ height: '100%' }"`.
-- Inside: avatar `van-image round width="160"`, `van-loading type="spinner"
-  size="48"`, `van-count-down`, and cancel `van-button round type="danger"
-  size="large"`.
-
-**Incoming call (app open)**
-- Same full-height Popup. Avatar 160px.
-- `van-grid :column-num="2"`: decline `van-button round type="danger" size="large"`,
-  accept `van-button round type="success" size="large"`.
-- Use `:lock-scroll="true"`; no tap-outside dismiss.
-
-**In call**
-- Full-height `van-popup`, with dark local tokens through a nested
-  `van-config-provider theme-vars-scope="local" :theme-vars="callVars"`.
-- Remote `<video playsinline autoplay>` fills the screen (plain element). In voice mode
-  it shows the avatar instead.
-- Self-view: `van-floating-bubble axis="xy" magnetic="x" :gap="16"` with a `<video
-  muted playsinline>` in its slot. Tokens: `floatingBubbleSize: '120px'`,
-  `floatingBubbleBorderRadius: '20px'`.
-- Controls: `van-grid :column-num="4" :border="false"` at the bottom with
-  `van-safe-area-bottom`:
-  - mute: `van-button round size="large" :type="muted ? 'warning' : 'default'"`;
-  - camera on/off: same pattern;
-  - switch to chat: `type="primary"`;
-  - end call: `type="danger"`.
-- Switch to chat: hide the Popup and show a `van-floating-bubble` with the phone icon
-  and the call timer. Tapping it reopens the call. Audio keeps running because the
-  media elements stay mounted (`v-show`, not `v-if`).
 
 **Setup (adult, one time)**
 - `van-steps direction="vertical" :active`, with sections in
@@ -148,7 +118,7 @@ export const themeVars: ConfigProviderThemeVars = {
   // palette: soft and warm, not neon
   primaryColor: '#6C5CE7',      // lavender-indigo: my bubble, main actions
   successColor: '#22B07D',      // accept call
-  dangerColor: '#EF5A6F',       // decline / end call
+  dangerColor: '#EF5A6F',       // errors
   warningColor: '#FFB23F',      // ping, muted state
   textColor: '#2B2440',
   textColor2: '#6B6585',
@@ -180,22 +150,9 @@ export const themeVars: ConfigProviderThemeVars = {
   toastIconSize: '48px',
   badgeDotSize: '14px',
   countDownFontSize: '18px',
-  floatingBubbleSize: '72px',
-  floatingBubbleBorderRadius: '999px',
-  floatingBubbleIconSize: '32px',
   actionSheetItemFontSize: '20px',
 }
 
-// in-call screen only (local scope)
-export const callVars: ConfigProviderThemeVars = {
-  popupBackground: '#15121F',
-  textColor: '#FFFFFF',
-  buttonDefaultBackground: 'rgba(255,255,255,.16)',
-  buttonDefaultColor: '#FFFFFF',
-  buttonDefaultBorderColor: 'transparent',
-  floatingBubbleSize: '120px',
-  floatingBubbleBorderRadius: '20px',
-}
 ```
 
 Also needed:
@@ -206,7 +163,7 @@ Also needed:
 
 Dark mode: **light only in v1**. Force `theme="light"` on ConfigProvider and ignore
 `prefers-color-scheme`. Reasons: one look on both kids' devices, half the visual
-states to test, and the in-call screen is already dark through `callVars`. Vant's
+states to test, and the video block is dark by itself. Vant's
 `themeVarsDark` stays available if a dark theme is wanted later.
 
 Emoji: **a static curated list, no picker library.** Use ~120 emoji in 5–6 tabs

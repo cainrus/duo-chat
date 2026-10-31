@@ -1,8 +1,8 @@
 // Product rules from the design spec. Change timings here only.
 
 /**
- * Pause after a call attempt (and between ping pushes). A call rings exactly this long:
- * not accepted by then, it ends as an unanswered attempt.
+ * Pause after an unanswered call attempt before the next one (and between ping pushes).
+ * A call itself has no ring timeout: the caller waits in the "room" while her app is visible.
  */
 export const CALL_COOLDOWN_MS = 60_000
 

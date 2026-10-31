@@ -59,18 +59,21 @@ export type RoomView = {
   peerPresent: boolean
   call: CallButtonView
   ping: PingButtonView
-  /** A call is ringing towards this side (it ends unanswered at the caller's `outgoing.until`). */
+  /** The friend waits for this side in the call (it lasts while her app stays visible). */
   incoming: boolean
-  /** This side is ringing the peer; the call ends unanswered at `until`. */
-  outgoing: { until: number } | null
+  /** This side waits for the friend in the call; ends when we hide the app or switch OFF. */
+  outgoing: boolean
   /** A call is connected (accepted and not ended). */
   inCall: boolean
 }
 
 export type PingResult = 'nudged' | 'pushed' | 'held'
 
-/** There is no "decline": a call nobody joins ends at its timeout (or the caller cancels). */
-export type CallEndReason = 'cancelled' | 'timeout' | 'hangup'
+/**
+ * cancelled: the caller stopped waiting (switched OFF, hid or closed the app) before the
+ * friend joined. hangup: a connected call ended. There is no decline and no ring timeout.
+ */
+export type CallEndReason = 'cancelled' | 'hangup'
 
 export type ServerToClient =
   | { t: 'view'; view: RoomView }

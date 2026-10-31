@@ -24,8 +24,13 @@ export function playDing(): void {
   }
 }
 
-/** How often the soft ring repeats while a call rings towards us. */
+/** How often the soft ring repeats while the friend waits for us in a call. */
 export const RING_EVERY_MS = 3_000
+/**
+ * She may wait for a long time (voice room, no ring timeout): the chime stops after this,
+ * and only the glowing AUDIO button keeps inviting.
+ */
+export const RING_FOR_MS = 60_000
 
 /** One soft, low chime: quieter and shorter than the nudge ding. */
 function playChime(): void {
@@ -50,9 +55,13 @@ function playChime(): void {
   }
 }
 
-/** Starts the soft repeating ring; returns the function that stops it. */
+/** Starts the soft repeating ring (for RING_FOR_MS at most); returns the function that stops it. */
 export function startRinging(): () => void {
   playChime()
   const id = setInterval(playChime, RING_EVERY_MS)
-  return () => clearInterval(id)
+  const cap = setTimeout(() => clearInterval(id), RING_FOR_MS)
+  return () => {
+    clearInterval(id)
+    clearTimeout(cap)
+  }
 }

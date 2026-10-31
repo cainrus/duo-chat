@@ -13,11 +13,15 @@ import {
 
 const T0 = 1_000_000
 
-/** Place a call at `at` and let it time out at the end of the cooldown. */
+/**
+ * Place a call at `at`, wait 5 minutes alone, give up. `endedAt` is when the button may be
+ * used again (after the cooldown, if an attempt is left).
+ */
 function unansweredCall(s: CallAttemptState, at: number): { s: CallAttemptState; endedAt: number } {
   const placed = onCallPlaced(s, at)
-  const endedAt = at + CALL_COOLDOWN_MS
-  return { s: onCallUnanswered(placed, endedAt, 'timeout'), endedAt }
+  const gaveUp = at + 5 * 60_000
+  const next = onCallUnanswered(placed, gaveUp)
+  return { s: next, endedAt: next.lockedSince ?? gaveUp + CALL_COOLDOWN_MS }
 }
 
 describe('call attempts', () => {
@@ -28,13 +32,16 @@ describe('call attempts', () => {
     expect(callButtonView(s, T0)).toEqual({ kind: 'ready' })
   })
 
-  it('locks the button for the cooldown after a call', () => {
+  it('no ring timeout: waiting does not start the cooldown; giving up does', () => {
     const s = onCallPlaced(initialCallAttempts(), T0)
-    expect(canCall(s, T0 + 1)).toBe(false)
-    expect(callButtonView(s, T0 + 1)).toEqual({ kind: 'cooldown', until: T0 + CALL_COOLDOWN_MS })
+    expect(s.cooldownUntil).toBeNull()
+    expect(s.attemptsLeft).toBe(1)
+    const gaveUp = onCallUnanswered(s, T0 + 3_600_000)
+    expect(canCall(gaveUp, T0 + 3_600_000 + 1)).toBe(false)
+    expect(callButtonView(gaveUp, T0 + 3_600_000 + 1)).toEqual({ kind: 'cooldown', until: T0 + 3_600_000 + CALL_COOLDOWN_MS })
   })
 
-  it('allows exactly one more call after the first one times out', () => {
+  it('allows exactly one more call after the first one, once the cooldown is over', () => {
     const { s, endedAt } = unansweredCall(initialCallAttempts(), T0)
     expect(s.attemptsLeft).toBe(1)
     expect(canCall(s, endedAt)).toBe(true)
@@ -77,16 +84,17 @@ describe('call attempts', () => {
   })
 
   it('a callback while not locked changes nothing', () => {
-    const s = onCallPlaced(initialCallAttempts(), T0)
+    const s = onCallUnanswered(onCallPlaced(initialCallAttempts(), T0), T0 + 1)
     expect(onCalledBack(s, T0 + 1)).toEqual(s)
   })
 
-  it('cancelling counts as an attempt', () => {
+  it('giving up at once still counts as an attempt', () => {
     const placed = onCallPlaced(initialCallAttempts(), T0)
-    const cancelled = onCallUnanswered(placed, T0 + 3_000, 'cancelled')
+    const cancelled = onCallUnanswered(placed, T0 + 3_000)
     expect(cancelled.attemptsLeft).toBe(1)
-    const second = onCallUnanswered(onCallPlaced(cancelled, T0 + 3_000), T0 + 5_000, 'cancelled')
-    expect(callButtonView(second, T0 + 5_000).kind).toBe('nobodyHome')
+    const t = T0 + 3_000 + CALL_COOLDOWN_MS
+    const second = onCallUnanswered(onCallPlaced(cancelled, t), t + 2_000)
+    expect(callButtonView(second, t + 2_000).kind).toBe('nobodyHome')
   })
 
   it('an answered call resets everything', () => {
@@ -94,7 +102,7 @@ describe('call attempts', () => {
   })
 
   it('refuses to place a call when not allowed', () => {
-    const s = onCallPlaced(initialCallAttempts(), T0)
+    const s = onCallUnanswered(onCallPlaced(initialCallAttempts(), T0), T0)
     expect(() => onCallPlaced(s, T0 + 1)).toThrow()
   })
 })
