@@ -24,8 +24,8 @@ non-technical parent with an AI assistant.
 ## Goals
 
 1. **Text chat with emoji** is the home screen. Two people, one conversation.
-   Messages are ephemeral (1 hour) and never push; a ping button calls the
-   friend into the chat.
+   Messages are ephemeral (1 hour). A message to an absent friend sends her a
+   content-free invitation push; a ping button calls her into the chat.
 2. **Calls without pressure** (owner, 2026-10-31): one call switch per side,
    OFF | AUDIO | VIDEO, in the chat. Calls are voice; video only when both
    chose it. No decline, no ring timeout, no call screen: the call happens
@@ -124,12 +124,14 @@ Cooldown length lives in one config constant.
 - A side is **present** while the app is visible, and for **1 minute** after
   it was hidden (switched away, screen off).
 - A side is **absent** after 1 minute hidden or when the app is closed.
-- Pushes go only to an absent side. To a present side, calls ring in the app
-  and pings show in the app; nothing goes through push.
+- Pushes go only to an absent side. To a present side, calls ring in the app;
+  «Позвать» is hidden while she is present, and messages just arrive.
 
 ### Text messages (owner's rules)
 
-- Text never sends a push. You can write as much as you like, at any time.
+- You can write as much as you like, at any time. The text never goes through
+  the server or a push; to an absent friend a message only triggers the
+  content-free invitation (see "Invitations").
 - **Text never touches the server** (owner). Messages go device-to-device over
   a WebRTC data channel, opened whenever both sides are in the app. The data
   channel is DTLS-encrypted by the browser; signaling that sets it up is E2E
@@ -153,25 +155,43 @@ Cooldown length lives in one config constant.
 - Messages are kept on the device (IndexedDB) only until expiry, so they
   survive a reload within the hour.
 
-### Ping button (owner's rules)
+### Invitations: ping, messages, voice room (owner's decisions, 2026-10-31)
 
-A "come to the chat" button. It is how you call someone into the chat without
-a call.
+Three things can invite an absent friend: the «Позвать» button, a message
+written while she is away, and entering the voice room. They all look the same
+and share one budget, so the friend's parents never see spam.
 
-- If the other side is present: an in-app nudge (sound + animation), no push,
-  not counted.
-- If the other side is absent: a push ("<name> зовёт в чат"), rationed:
-  1. first ping → push;
-  2. the next push is allowed after the same cooldown as calls;
-  3. after the second push, no more ping pushes until the next day (my call:
-     24 hours after the second push, matching the call rule);
-  4. a reply from the other side (a message, a ping or a call) resets the
-     counter.
-- The ping button is never locked: while pushes are used up, pressing it
-  still shows the nudge if the friend comes back. My call: the button shows
-  a small "сегодня больше не позвать" state when no pushes are left.
-
-Ping pushes and call pushes are counted separately.
+- **One look.** Every invitation is the same notification: title «Дуо», body
+  «<имя> зовёт тебя 👋» (fallback «Подружка»). The trigger kind stays only in
+  the notification's data and decides where a click leads: a call one opens
+  the app and shows the missed-call card if the caller already left; the others
+  open the chat.
+- **One budget per sender**, counted on the server: first push; the next only
+  after `CALL_COOLDOWN_MS` (1 minute); after the second, nothing until 24 hours
+  later. A reply from the friend (a message, a ping or a call) resets it. The
+  call-attempt rules still govern the voice switch itself; only the push for a
+  room entry comes from this budget.
+- **Only to an absent friend.** While she is in the app, «Позвать» is hidden
+  (owner: no in-app nudges at all) and a message just arrives; nothing is
+  counted. A ping that reaches the server while she is present is ignored.
+- **The button shows the wait** (owner: so a kid does not tap it 10,000
+  times): after a push it is disabled with a countdown ring and the seconds
+  left; when the budget is used up, a calm disabled «🌙 завтра». A ping to a
+  friend who cannot get pushes (no subscription, or muted) spends nothing but
+  pauses the button the same minute. Taps on the disabled button do nothing (a
+  tiny shake, none under prefers-reduced-motion).
+- **Mute bell** (per device, in the chat header, «Уведомления вкл/выкл»). Off:
+  this device gets no pushes at all (calls, pings, messages); the server
+  treats it like a device without a subscription (nothing counted). The choice
+  is kept on the device and re-sent on every connect. Turning it on when the
+  browser never allowed notifications runs the permission prompt first.
+- **Lifetime.** Web Push TTL for every invitation is 1 hour (`INVITE_TTL_MS`).
+  One tag (`duo`) with renotify, so a new notification replaces the old one: at
+  most one on screen. Ping and message notifications carry `expiresAt` (+1 h);
+  the next push closes expired ones before showing. A call notification has no
+  expiry of its own (the caller may wait long). When the app is opened or comes
+  back to the front, all duo notifications are closed. Browsers and iOS cannot
+  dismiss a shown notification on a timer; these rules are the closest we get.
 
 ### Waiting lifecycle (voice room)
 
@@ -194,7 +214,9 @@ Ping pushes and call pushes are counted separately.
   call: presence decides whether a ping pushes and whether messages can go
   out now). Under it a compact call bar: the call switch, one status line
   («ждём <имя>…», «<имя> зовёт», the call timer, the cooldown countdown or
-  «никого нет») and the ping button (shows "pushes used up"). While both are
+  «никого нет») and the ping button (only while she is away: ready, a
+  countdown ring, or «🌙 завтра»). A bell in the header turns pushes to this
+  device on or off. While both are
   on VIDEO, a video block (friend big, me small) sits above the messages. The
   message list and the input with a large emoji picker stay usable during a
   call; the friend's audio keeps playing. No incoming popup, no full-screen
@@ -231,8 +253,10 @@ Ping pushes and call pushes are counted separately.
     hides IP addresses (ICE candidates) from the server.
   - The server is untrusted for content: it relays only ciphertext and stores
     no content. It still sees metadata: when someone connects, calls, pings,
-    push counters.
-  - Push text stays generic ("<name> зовёт" / "<name> зовёт в чат").
+    that a message was written (`wrote`, never its text), push counters and
+    whether a device muted pushes.
+  - Push text is one generic invitation for everything («Дуо: <name> зовёт
+    тебя 👋»); the name is added on the device, never sent.
 - **Identity and pairing:** no accounts, no passwords, exactly two device
   slots.
   - The adult opens setup on the first device; it generates the pair secret

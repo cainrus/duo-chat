@@ -9,8 +9,15 @@ export type CallButtonView =
   | { kind: 'cooldown'; until: number }
   | { kind: 'nobodyHome'; until: number }
 
-/** What the ping button should show. It is never disabled. */
-export type PingButtonView = { kind: 'ready' } | { kind: 'exhausted'; until: number }
+/**
+ * What the ping button should show (it is hidden while the friend is in the app). cooldown:
+ * the next ping is not allowed before `until`. exhausted: no more pushes until `until`.
+ * Both are shown disabled, so a kid sees the wait instead of tapping again and again.
+ */
+export type PingButtonView =
+  | { kind: 'ready' }
+  | { kind: 'cooldown'; until: number }
+  | { kind: 'exhausted'; until: number }
 
 /** Encrypted, authenticated blob. The server relays it and cannot read it. */
 export type SealedEnvelope = { v: 1; iv: string; ct: string }

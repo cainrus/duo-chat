@@ -78,8 +78,10 @@ export function parseClientFrame(raw: string | ArrayBuffer): ClientToServer | nu
     case 'callAccept':
     case 'callEnd':
     case 'ping':
-    case 'replied':
+    case 'wrote':
       return hasOnly(v, ['t']) ? { t: v.t } : null
+    case 'pushMute':
+      return hasOnly(v, ['t', 'muted']) && typeof v.muted === 'boolean' ? { t: 'pushMute', muted: v.muted } : null
     case 'pushSubscribe': {
       const sub = hasOnly(v, ['t', 'sub']) ? subscription(v.sub) : null
       return sub ? { t: 'pushSubscribe', sub } : null

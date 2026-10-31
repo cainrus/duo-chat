@@ -1,29 +1,57 @@
 import { describe, expect, it } from 'vitest'
-import { callPushUrl, notificationFor, parseCallPushUrl, parsePushPayload } from './notification'
+import { INVITE_TTL_MS } from '@shared/constants'
+import { callPushUrl, expiredNotifications, notificationFor, parseCallPushUrl, parsePushPayload } from './notification'
 
-describe('push notification text', () => {
-  it('call and ping texts use the friend name', () => {
-    const call = notificationFor({ kind: 'call' }, 'Соня', 123)
-    expect(call.title).toBe('Соня зовёт')
-    expect(call.options.data.url).toBe('/?from=call-push&at=123')
-    const ping = notificationFor({ kind: 'ping' }, 'Соня', 123)
-    expect(ping.title).toBe('Соня зовёт в чат')
-    expect(ping.options.data.url).toBe('/')
+describe('push notification', () => {
+  it('every invitation looks the same: «Дуо», «<имя> зовёт тебя 👋», one tag that replaces the old', () => {
+    const specs = (['ping', 'message', 'call'] as const).map((kind) => notificationFor({ kind }, 'Соня', 123))
+    for (const spec of specs) {
+      expect(spec.title).toBe('Дуо')
+      expect(spec.options.body).toBe('Соня зовёт тебя 👋')
+      expect(spec.options).toMatchObject({ tag: 'duo', renotify: true, timestamp: 123 })
+    }
+    // The kind is only in data, and only decides where a click leads.
+    expect(specs.map((s) => s.options.data.kind)).toEqual(['ping', 'message', 'call'])
   })
 
-  it('falls back to "Подружка" and to the ping text', () => {
-    expect(notificationFor({ kind: 'call' }, null, 1).title).toBe('Подружка зовёт')
-    expect(notificationFor(null, ' ', 1).title).toBe('Подружка зовёт в чат')
+  it('ping and message expire after INVITE_TTL_MS and open the chat; a call has no expiry and opens the missed-call check', () => {
+    expect(notificationFor({ kind: 'ping' }, 'Соня', 123).options.data).toEqual({ url: '/', kind: 'ping', expiresAt: 123 + INVITE_TTL_MS })
+    expect(notificationFor({ kind: 'message' }, 'Соня', 123).options.data.expiresAt).toBe(123 + INVITE_TTL_MS)
+    expect(notificationFor({ kind: 'call' }, 'Соня', 123).options.data).toEqual({
+      url: '/?from=call-push&at=123',
+      kind: 'call',
+      expiresAt: null,
+    })
+  })
+
+  it('falls back to "Подружка", and shows the invitation even without a readable payload', () => {
+    expect(notificationFor({ kind: 'call' }, null, 1).options.body).toBe('Подружка зовёт тебя 👋')
+    const blind = notificationFor(null, ' ', 1)
+    expect(blind.title).toBe('Дуо')
+    expect(blind.options.data.url).toBe('/')
   })
 
   it('parses payloads strictly', () => {
     expect(parsePushPayload('{"kind":"call"}')).toEqual({ kind: 'call' })
+    expect(parsePushPayload('{"kind":"message"}')).toEqual({ kind: 'message' })
     // An older server still sends callKind: it is ignored.
     expect(parsePushPayload('{"kind":"call","callKind":"video"}')).toEqual({ kind: 'call' })
     expect(parsePushPayload('{"kind":"ping","x":1}')).toEqual({ kind: 'ping' })
     expect(parsePushPayload('{"kind":"fax"}')).toBeNull()
     expect(parsePushPayload('nope')).toBeNull()
     expect(parsePushPayload(null)).toBeNull()
+  })
+
+  it('finds the shown notifications whose time is over', () => {
+    const shown = [
+      { data: { expiresAt: 100 } },
+      { data: { expiresAt: 200 } },
+      { data: { expiresAt: null } },
+      { data: null },
+      {},
+    ]
+    expect(expiredNotifications(shown, 150)).toEqual([shown[0]])
+    expect(expiredNotifications(shown, 200)).toEqual([shown[0], shown[1]])
   })
 
   it('call push URL round-trips', () => {

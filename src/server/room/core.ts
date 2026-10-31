@@ -15,7 +15,15 @@ import {
   onCallUnanswered,
   type CallAttemptState,
 } from '../rules/callAttempts'
-import { decidePing, initialPingPushes, onPingReply, pingButtonView, pingChangesAt, type PingPushState } from '../rules/pingPushes'
+import {
+  decideInvite,
+  initialPingPushes,
+  onPingHeld,
+  onPingReply,
+  pingButtonView,
+  pingChangesAt,
+  type PingPushState,
+} from '../rules/pingPushes'
 import { initialPresence, isPresent, presenceExpiresAt, setActive, type PresenceState } from '../rules/presence'
 
 export type SideState = {
@@ -26,6 +34,8 @@ export type SideState = {
   call: CallAttemptState
   ping: PingPushState
   pushSub: PushSubscriptionJSONLike | null
+  /** This device asked for no pushes at all. Optional: older saved state lacks it. */
+  pushMuted?: boolean
 }
 
 export type RoomState = {
@@ -60,6 +70,7 @@ function initialSide(): SideState {
     call: initialCallAttempts(),
     ping: initialPingPushes(),
     pushSub: null,
+    pushMuted: false,
   }
 }
 
@@ -127,6 +138,10 @@ export class RoomCore {
         me.pushSub = msg.sub
         return []
 
+      case 'pushMute':
+        me.pushMuted = msg.muted
+        return []
+
       case 'visibility':
         me.visible = msg.visible
         this.#updatePresence(side, now)
@@ -176,24 +191,20 @@ export class RoomCore {
           fx.push(...this.#send(side, { t: 'pingResult', result: 'held' }))
           break
         }
+        // She is in the app (the button is hidden then): ignored, nothing is counted.
+        if (this.#reachable(peer, now)) break
         them.ping = onPingReply()
-        const reachable = this.#reachable(peer, now)
-        // A friend with no push subscription cannot be pushed: nothing is counted.
-        if (!reachable && !them.pushSub) {
-          fx.push(...this.#send(side, { t: 'pingResult', result: 'held' }))
-          break
-        }
-        const r = decidePing(me.ping, now, reachable)
-        me.ping = r.state
-        if (r.decision === 'nudge') fx.push(...this.#send(peer, { t: 'nudge' }))
-        else if (r.decision === 'push') fx.push({ type: 'push', to: peer, payload: { kind: 'ping' } })
-        const result = r.decision === 'nudge' ? 'nudged' : r.decision === 'push' ? 'pushed' : 'held'
-        fx.push(...this.#send(side, { t: 'pingResult', result }))
+        const pushed = this.#invite(side, 'ping', now, fx)
+        // She cannot get pushes: nothing is spent, but the button pauses like after a push.
+        if (!pushed && (!them.pushSub || them.pushMuted)) me.ping = onPingHeld(me.ping, now)
+        fx.push(...this.#send(side, { t: 'pingResult', result: pushed ? 'pushed' : 'held' }))
         break
       }
 
-      case 'replied':
+      case 'wrote':
         them.ping = onPingReply()
+        // A message to an absent friend invites her; to a present one nothing.
+        if (them.paired && !this.#reachable(peer, now)) this.#invite(side, 'message', now, fx)
         break
     }
     fx.push(...this.#pushRinging(now))
@@ -210,7 +221,7 @@ export class RoomCore {
     const times: number[] = []
     for (const side of SIDES) {
       const s = this.#s.sides[side]
-      for (const t of [presenceExpiresAt(s.presence), callChangesAt(s.call), pingChangesAt(s.ping)]) {
+      for (const t of [presenceExpiresAt(s.presence), callChangesAt(s.call), pingChangesAt(s.ping, now)]) {
         if (t !== null && t > now) times.push(t)
       }
     }
@@ -254,7 +265,23 @@ export class RoomCore {
     const callee = otherSide(pending.from)
     if (this.#reachable(callee, now)) return []
     pending.pushed = true
-    return [{ type: 'push', to: callee, payload: { kind: 'call' } }]
+    const fx: Effect[] = []
+    this.#invite(pending.from, 'call', now, fx)
+    return fx
+  }
+
+  /**
+   * One push budget per sender for every invitation (ping, message, voice room entry). A friend
+   * who cannot be pushed (no subscription, or she muted pushes) costs nothing. True if pushed.
+   */
+  #invite(from: Side, kind: PushPayload['kind'], now: number, fx: Effect[]): boolean {
+    const to = otherSide(from)
+    const target = this.#s.sides[to]
+    if (!target.pushSub || target.pushMuted) return false
+    const r = decideInvite(this.#s.sides[from].ping, now)
+    this.#s.sides[from].ping = r.state
+    if (r.push) fx.push({ type: 'push', to, payload: { kind } })
+    return r.push
   }
 
   #updatePresence(side: Side, now: number): void {

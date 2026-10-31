@@ -46,17 +46,3 @@ input {
 .caption-muted {
   color: var(--van-text-color-3);
 }
-
-.wiggle {
-  animation: pulse 0.4s ease-in-out 2;
-}
-@keyframes pulse {
-  50% {
-    transform: scale(1.08);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .wiggle {
-    animation: none;
-  }
-}

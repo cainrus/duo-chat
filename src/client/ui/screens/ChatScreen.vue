@@ -7,7 +7,6 @@ import { showToast } from 'vant'
 import type { PingResult } from '@shared/protocol'
 import { MAX_MESSAGE_LENGTH } from '../../messages/store'
 import { useDuo } from '../useDuo'
-import { playDing } from '../sound'
 import DuoAvatar from '../components/DuoAvatar.vue'
 import ChatBubble from '../components/ChatBubble.vue'
 import EmojiKeyboard from '../components/EmojiKeyboard.vue'
@@ -18,6 +17,8 @@ import IconSend from '~icons/ph/paper-plane-right-fill'
 import IconPhoneMissed from '~icons/ph/phone-incoming-fill'
 import IconOffline from '~icons/ph/wifi-slash-bold'
 import IconX from '~icons/ph/x-bold'
+import IconBell from '~icons/ph/bell-fill'
+import IconBellOff from '~icons/ph/bell-slash-fill'
 
 defineProps<{ missedCall: boolean }>()
 const emit = defineEmits<{ callBack: []; dismissMissed: [] }>()
@@ -28,7 +29,6 @@ const s = duo.state
 const text = ref('')
 const emojiOpen = ref(false)
 const list = ref<HTMLElement | null>(null)
-const shaking = ref(false)
 
 const view = computed(() => s.view)
 const present = computed(() => !!view.value?.peerPresent)
@@ -65,7 +65,6 @@ watch([() => s.messages.length, emojiOpen, () => s.media.videoOn], scrollToEnd)
 
 // What became of our ping: a short toast, so pressing it is never silent.
 const PING_NOTES: Record<PingResult, string> = {
-  nudged: 'Позвала 👋',
   pushed: 'Отправила 🔔',
   held: 'Подожди, она скоро увидит ⏳',
 }
@@ -76,24 +75,18 @@ watch(
   },
 )
 
-// The friend pressed "come to the chat" while we are here: wiggle the avatar and ding.
-watch(
-  () => s.nudgeAt,
-  (at) => {
-    if (at == null) return
-    playDing()
-    shaking.value = false
-    void nextTick(() => (shaking.value = true))
-    setTimeout(() => (shaking.value = false), 1600)
-  },
-)
+// The bell: pushes to this device on or off. Turning them on may ask for permission first.
+const bellOn = computed(() => s.notificationsAllowed && !s.pushMuted)
+function toggleBell() {
+  void duo.setPushMuted(bellOn.value)
+}
 </script>
 
 <template>
   <div class="chat van-safe-area-top">
     <header class="chat-head">
       <van-badge dot :color="present ? 'var(--van-success-color)' : 'var(--van-text-color-3)'" :offset="[-6, 50]">
-        <DuoAvatar :avatar="s.peer?.avatar" :size="56" :class="{ nudge: shaking }" data-test="peer-avatar" />
+        <DuoAvatar :avatar="s.peer?.avatar" :size="56" data-test="peer-avatar" />
       </van-badge>
       <div class="head-text">
         <div class="head-name">{{ peerName }}</div>
@@ -102,6 +95,18 @@ watch(
         </div>
       </div>
       <IconOffline v-if="s.connection !== 'online'" class="head-offline" aria-label="Нет связи" />
+      <button
+        type="button"
+        class="bell"
+        :class="{ 'bell--off': !bellOn }"
+        aria-label="Уведомления вкл/выкл"
+        :aria-pressed="bellOn"
+        data-test="bell"
+        @click="toggleBell"
+      >
+        <IconBell v-if="bellOn" class="bell-icon" />
+        <IconBellOff v-else class="bell-icon" />
+      </button>
       <DuoAvatar :avatar="s.me?.avatar" :size="40" class="head-me" />
     </header>
 
@@ -200,6 +205,25 @@ watch(
   height: 28px;
   color: var(--van-danger-color);
 }
+.bell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--van-background-2);
+  color: var(--van-warning-color);
+  cursor: pointer;
+}
+.bell--off {
+  color: var(--van-text-color-3);
+}
+.bell-icon {
+  width: 26px;
+  height: 26px;
+}
 .head-me {
   opacity: 0.9;
 }
@@ -285,9 +309,6 @@ watch(
   max-height: 120px;
   user-select: text;
 }
-.nudge {
-  animation: nudge 0.5s ease-in-out 3;
-}
 .error-close {
   display: inline-flex;
   align-items: center;
@@ -301,22 +322,5 @@ watch(
   color: inherit;
   font-size: 18px;
   cursor: pointer;
-}
-@media (prefers-reduced-motion: reduce) {
-  .nudge {
-    animation: none;
-  }
-}
-@keyframes nudge {
-  0%,
-  100% {
-    transform: rotate(0) scale(1);
-  }
-  25% {
-    transform: rotate(-14deg) scale(1.12);
-  }
-  75% {
-    transform: rotate(14deg) scale(1.12);
-  }
 }
 </style>

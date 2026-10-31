@@ -8,7 +8,6 @@ import { mountWithDuo } from '../test/mountWithDuo'
 
 const ring = vi.hoisted(() => ({ starts: 0, stops: 0 }))
 vi.mock('../sound', () => ({
-  playDing: () => {},
   startRinging: () => {
     ring.starts++
     return () => ring.stops++

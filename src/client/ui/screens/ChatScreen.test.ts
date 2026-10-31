@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
-import chatScreenSource from './ChatScreen.vue?raw'
 import ChatScreen from './ChatScreen.vue'
 import { mountWithDuo } from '../test/mountWithDuo'
 
@@ -57,25 +56,62 @@ describe('ChatScreen', () => {
     expect(session.state.error).toBeNull()
   })
 
-  it('the nudge wiggle stops for people who asked for less motion', () => {
-    const block = chatScreenSource.match(/@media \(prefers-reduced-motion: reduce\) \{([^}]*)\}/)
-    expect(block?.[1]).toMatch(/\.nudge/)
-    expect(block?.[1]).toMatch(/animation: none/)
+  it('«Позвать» is hidden while the friend is in the chat, and shown when she is away', async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
+    expect(wrapper.find('[data-test="ping"]').exists()).toBe(false)
+    session.dev.peerLeaves()
+    await nextTick()
+    expect(wrapper.find('[data-test="ping"]').exists()).toBe(true)
   })
 
-  it('pressing ping shows what became of it', async () => {
+  it('pressing ping shows what became of it, then the button waits with a countdown', async () => {
     const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false }, attachTo: document.body })
     const toastText = () => [...document.querySelectorAll('.van-toast')].map((t) => t.textContent ?? '').join('|')
-    await wrapper.get('[aria-label="Позвать в чат"]').trigger('click')
-    await vi.waitFor(() => expect(toastText()).toContain('Позвала 👋'))
     session.dev.peerLeaves()
-    session.dev.options.peerHasPush = false
-    await wrapper.get('[aria-label="Позвать в чат"]').trigger('click')
-    await vi.waitFor(() => expect(toastText()).toContain('Подожди, она скоро увидит ⏳'))
-    session.dev.options.peerHasPush = true
-    await wrapper.get('[aria-label="Позвать в чат"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="ping"] button').trigger('click')
     await vi.waitFor(() => expect(toastText()).toContain('Отправила 🔔'))
+    const btn = wrapper.get('[data-test="ping"] button')
+    expect(btn.attributes('aria-disabled')).toBe('true')
+    expect(btn.attributes('aria-label')).toMatch(/подожди (59|60) с/)
+    expect(wrapper.get('[data-test="ping-seconds"]').text()).toMatch(/^(59|60) с$/)
+    // A tap while waiting does nothing.
+    const before = session.state.lastPing
+    await btn.trigger('click')
+    expect(session.state.lastPing).toBe(before)
+
+    session.dev.setPingView('ready')
+    session.dev.options.peerHasPush = false
+    await nextTick()
+    await wrapper.get('[data-test="ping"] button').trigger('click')
+    await vi.waitFor(() => expect(toastText()).toContain('Подожди, она скоро увидит ⏳'))
     wrapper.unmount()
+  })
+
+  it('no more pings today: a calm, disabled «🌙 завтра»', async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
+    session.dev.peerLeaves()
+    session.dev.setPingView('exhausted')
+    await nextTick()
+    const ping = wrapper.get('[data-test="ping"]')
+    expect(ping.attributes('data-state')).toBe('exhausted')
+    expect(ping.text()).toContain('🌙')
+    expect(ping.text()).toContain('завтра')
+    expect(ping.get('button').attributes('aria-disabled')).toBe('true')
+  })
+
+  it('the bell turns pushes for this device off and on', async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
+    const bell = () => wrapper.get('[data-test="bell"]')
+    expect(bell().attributes('aria-label')).toBe('Уведомления вкл/выкл')
+    expect(bell().attributes('aria-pressed')).toBe('true')
+    await bell().trigger('click')
+    await nextTick()
+    expect(session.state.pushMuted).toBe(true)
+    expect(bell().attributes('aria-pressed')).toBe('false')
+    await bell().trigger('click')
+    await nextTick()
+    expect(session.state.pushMuted).toBe(false)
   })
 
   it('my messages and the friend’s messages sit on different sides', async () => {

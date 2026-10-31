@@ -21,8 +21,16 @@ export const PRESENCE_GRACE_MS = 60_000
 /** Every chat message lives exactly this long from the moment it was sent. */
 export const MESSAGE_TTL_MS = 60 * 60_000
 
+/**
+ * How long an invitation push (ping, message, voice room entry) stays deliverable and valid.
+ * Web Push TTL for all of them, and the notification's `data.expiresAt` for ping and message.
+ * A call (voice room) can wait as long as the caller stays, so its notification has no expiry
+ * of its own; a click after the caller left shows the missed-call card.
+ */
+export const INVITE_TTL_MS = MESSAGE_TTL_MS
+
 /** Call attempts per round before "nobody's home". */
 export const CALL_ATTEMPTS_PER_ROUND = 2
 
-/** Pushes per ping round before the daily cap. */
+/** Invitation pushes (ping, message, voice room entry share them) per round before the daily cap. */
 export const PING_PUSHES_PER_ROUND = 2

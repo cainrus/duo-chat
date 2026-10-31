@@ -66,7 +66,7 @@ describe('connectServerLink', () => {
     const link = make()
     link.send({ t: 'ping' })
     link.setVisible(true)
-    link.send({ t: 'replied' })
+    link.send({ t: 'wrote' })
     const ws = FakeWebSocket.last()
     expect(ws.sent).toEqual([])
     ws.serverOpen()
@@ -74,7 +74,7 @@ describe('connectServerLink', () => {
       { t: 'hello', deviceToken: 'tok' },
       { t: 'visibility', visible: true },
       { t: 'ping' },
-      { t: 'replied' },
+      { t: 'wrote' },
     ])
   })
 
@@ -109,17 +109,22 @@ describe('connectServerLink', () => {
     const off = link.onMessage((m) => got.push(m))
     const ws = FakeWebSocket.last()
     ws.serverOpen()
-    ws.serverSend({ t: 'nudge' })
+    ws.serverSend({ t: 'callEnded', reason: 'hangup' })
     ws.serverSend('not json')
+    ws.serverSend({ t: 'nudge' })
     ws.serverSend({ t: 'bogus' })
     ws.serverSend('42')
-    ws.serverSend({ t: 'callEnded', reason: 'timeout' })
+    ws.serverSend({ t: 'callEnded', reason: 'cancelled' })
     ws.serverSend({ t: 'pingResult', result: 'pushed' })
-    ws.serverSend({ t: 'pingResult', result: 'maybe' })
+    ws.serverSend({ t: 'pingResult', result: 'nudged' })
     ws.serverSend({ t: 'pingResult' })
     off()
-    ws.serverSend({ t: 'nudge' })
-    expect(got).toEqual([{ t: 'nudge' }, { t: 'callEnded', reason: 'timeout' }, { t: 'pingResult', result: 'pushed' }])
+    ws.serverSend({ t: 'callEnded', reason: 'hangup' })
+    expect(got).toEqual([
+      { t: 'callEnded', reason: 'hangup' },
+      { t: 'callEnded', reason: 'cancelled' },
+      { t: 'pingResult', result: 'pushed' },
+    ])
   })
 
   it('reconnects with exponential backoff capped at max', () => {
@@ -151,7 +156,7 @@ describe('connectServerLink', () => {
     expect(FakeWebSocket.instances).toHaveLength(3)
     // now the server sends a view: next drop retries after minMs
     FakeWebSocket.last().serverOpen()
-    FakeWebSocket.last().serverSend({ t: 'nudge' })
+    FakeWebSocket.last().serverSend({ t: 'callEnded', reason: 'hangup' })
     FakeWebSocket.last().serverClose()
     vi.advanceTimersByTime(1000)
     expect(FakeWebSocket.instances).toHaveLength(4)
@@ -187,7 +192,7 @@ describe('connectServerLink', () => {
     link.onMessage((m) => got.push(m))
     old.serverClose()
     vi.advanceTimersByTime(1000)
-    old.serverSend({ t: 'nudge' })
+    old.serverSend({ t: 'callEnded', reason: 'hangup' })
     old.serverOpen()
     expect(got).toEqual([])
     expect(link.status).toBe('connecting')

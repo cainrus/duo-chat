@@ -71,29 +71,39 @@ describe('fake session', () => {
     expect(s.state).toMatchObject({ myMode: 'off', peerMode: 'off' })
   })
 
-  it('ping pushes run out while the friend is away, and a reply resets them', () => {
+  it('ping: a push, a pause, the second push, then nothing until tomorrow; a reply resets', () => {
     const s = make()
     s.dev.peerLeaves()
     s.ping()
     expect(s.state.lastPing?.result).toBe('pushed')
+    expect(s.state.view!.ping).toEqual({ kind: 'cooldown', until: Date.now() + CALL_COOLDOWN_MS })
+    const before = s.state.lastPing
+    s.ping() // paused: ignored
+    expect(s.state.lastPing).toBe(before)
+    vi.advanceTimersByTime(CALL_COOLDOWN_MS)
     expect(s.state.view!.ping.kind).toBe('ready')
     s.ping()
     expect(s.state.view!.ping.kind).toBe('exhausted')
-    s.ping()
-    expect(s.state.lastPing?.result).toBe('held')
     s.dev.peerSays('🙂')
     expect(s.state.view!.ping.kind).toBe('ready')
   })
 
-  it('ping result: nudged while she is here, held when she has no notifications (not counted)', () => {
+  it('ping: ignored while she is here; held (and paused) when she has no notifications', () => {
     const s = make()
     s.ping()
-    expect(s.state.lastPing?.result).toBe('nudged')
+    expect(s.state.lastPing).toBeNull()
     s.dev.peerLeaves()
     s.dev.options.peerHasPush = false
     s.ping()
-    s.ping()
     expect(s.state.lastPing?.result).toBe('held')
-    expect(s.state.view!.ping.kind).toBe('ready')
+    expect(s.state.view!.ping.kind).toBe('cooldown')
+  })
+
+  it('the bell mutes and unmutes', async () => {
+    const s = make()
+    await s.setPushMuted(true)
+    expect(s.state.pushMuted).toBe(true)
+    await s.setPushMuted(false)
+    expect(s.state.pushMuted).toBe(false)
   })
 })

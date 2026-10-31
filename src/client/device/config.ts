@@ -15,6 +15,8 @@ export type DeviceConfig = {
   me: Profile
   /** Learned from the friend over the data channel; null until first contact. */
   peer: Profile | null
+  /** The bell in the chat: this device asked for no pushes. Re-sent to the server on connect. */
+  pushMuted?: boolean
 }
 
 export interface DeviceConfigStore {
@@ -99,6 +101,7 @@ function isDeviceConfig(v: unknown): v is DeviceConfig {
     (v.side === 'a' || v.side === 'b') &&
     typeof v.deviceToken === 'string' &&
     isProfile(v.me) &&
-    (v.peer === null || isProfile(v.peer))
+    (v.peer === null || isProfile(v.peer)) &&
+    (v.pushMuted === undefined || typeof v.pushMuted === 'boolean')
   )
 }

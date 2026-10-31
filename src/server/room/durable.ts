@@ -4,7 +4,7 @@
 // All product rules live in RoomCore; this file only moves bytes in and out.
 
 import { DurableObject } from 'cloudflare:workers'
-import { CALL_COOLDOWN_MS } from '@shared/constants'
+import { INVITE_TTL_MS } from '@shared/constants'
 import type { PushPayload, ServerToClient } from '@shared/protocol'
 import type { Side } from '@shared/types'
 import { generateDeviceToken, hashToken, verifyToken } from '../auth'
@@ -193,8 +193,8 @@ export class PairRoom extends DurableObject<Env> implements RoomRpc {
         sub,
         payload,
         { publicKey: this.env.VAPID_PUBLIC_KEY, privateKey: this.env.VAPID_PRIVATE_KEY, subject: this.env.VAPID_SUBJECT },
-        // A call push is useless after the ringing ends; a ping may wait up to an hour.
-        { ttlSeconds: payload.kind === 'call' ? CALL_COOLDOWN_MS / 1000 : 3600, urgency: 'high' },
+        // Every invitation (ping, message, voice room) stays deliverable for INVITE_TTL_MS.
+        { ttlSeconds: INVITE_TTL_MS / 1000, urgency: 'high' },
       )
       if (r.gone && this.#core.state.sides[to].pushSub?.endpoint === sub.endpoint) {
         this.#core.clearPushSub(to)

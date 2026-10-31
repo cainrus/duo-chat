@@ -73,17 +73,18 @@ components, passed through each component's `#icon` slot.
 - Call bar under the header (calls live inside the chat; owner, 2026-10-31): one
   segmented call switch OFF | AUDIO | VIDEO (`CallSwitch.vue`, plain `<button
   role="radio">` segments on Vant tokens, Phosphor icons phone-slash / phone /
-  video-camera, 64×56 targets). Under it one status line: «звоним…» +
-  `van-count-down`, the call timer, «<имя> зовёт», «снова через» + countdown, or
-  «никого нет». The ping button sits at the right of the bar:
-  - Ping: `van-button round size="large" type="warning"`.
-  - Ping pushes used up: `van-badge content="!"` plus a short "сегодня всё" label.
+  video-camera, 64×56 targets). Under it one status line: «ждём <имя>…», the call
+  timer, «<имя> зовёт», «снова через» + `van-count-down`, or «никого нет». The ping
+  button sits at the right of the bar, only while the friend is away
+  (`PingButton.vue`, a plain button on Vant tokens):
+  - Ready: warning colour, waving hand.
+  - Cooldown: disabled look, an SVG ring empties with the seconds left.
+  - Pushes used up: disabled, «🌙 завтра».
   - Her call: the AUDIO segment glows (no glow under prefers-reduced-motion).
   - VIDEO: disabled while OFF and for 3 s after AUDIO, with a small lock icon.
 - Video (only while both switches are on VIDEO): a rounded block above the messages,
   her `<video>` big, ours small in the corner (`CallVideo.vue`).
-- Ping nudge received: `showToast({ message: '👋', icon: <bell>, position: 'top',
-  duration: 1500 })`, plus a sound.
+- Header: a bell button toggles pushes to this device («Уведомления вкл/выкл»).
 
 **Setup (adult, one time)**
 - `van-steps direction="vertical" :active`, with sections in

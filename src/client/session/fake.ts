@@ -40,7 +40,6 @@ export type FakeDev = {
   seedChat(): void
   expireOldest(): void
   clearChat(): void
-  nudge(): void
   /** She calls us (her switch to AUDIO). */
   incoming(): void
   peerCancels(): void
@@ -50,7 +49,7 @@ export type FakeDev = {
   /** Her switch during a call: AUDIO or VIDEO. */
   peerMode(mode: 'audio' | 'video'): void
   setCallView(kind: 'ready' | 'cooldown' | 'nobodyHome'): void
-  setPingView(kind: 'ready' | 'exhausted'): void
+  setPingView(kind: 'ready' | 'cooldown' | 'exhausted'): void
   setError(text: string | null): void
   /** The app was opened from a call notification after the call was already gone. */
   missedFromPush(): void
@@ -69,6 +68,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   let idSeq = 0
   let callAttempts = 0
   let pingPushes = 0
+  let pingTimer: ReturnType<typeof setTimeout> | undefined
   let cooldownTimer: ReturnType<typeof setTimeout> | undefined
   let replyTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -86,8 +86,9 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     messages: [],
     pendingIds: [],
     directOpen: false,
-    nudgeAt: null,
     lastPing: null,
+    pushMuted: false,
+    notificationsAllowed: true,
     myMode: 'off',
     peerMode: 'off',
     videoUnlockAt: null,
@@ -220,12 +221,21 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     ping() {
       const v = view()
       const result = (r: PingResult) => (state.lastPing = { result: r, at: now() })
-      if (v.peerPresent) return void result('nudged')
-      // Rationed, or nobody to push to: nothing is counted.
-      if (!v.peerPaired || v.ping.kind === 'exhausted' || !options.peerHasPush) return void result('held')
+      // She is in the app (the button is hidden then), or the button is paused: ignored.
+      if (v.peerPresent || !v.peerPaired || v.ping.kind !== 'ready') return
+      // Nobody to push to: nothing is counted, but the button pauses like after a push.
+      if (!options.peerHasPush) {
+        pausePing()
+        return void result('held')
+      }
       pingPushes++
       if (pingPushes >= PING_PUSHES_PER_ROUND) v.ping = { kind: 'exhausted', until: now() + LOCK_MS }
+      else pausePing()
       result('pushed')
+    },
+
+    async setPushMuted(muted) {
+      state.pushMuted = muted
     },
 
     async setMode(mode: CallMode) {
@@ -277,6 +287,17 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     dev: undefined as unknown as FakeDev,
   }
 
+  /** The pause after an invitation: the ping button shows a countdown, then is ready again. */
+  const pausePing = () => {
+    const until = now() + CALL_COOLDOWN_MS
+    view().ping = { kind: 'cooldown', until }
+    clearTimeout(pingTimer)
+    pingTimer = setTimeout(() => {
+      const v = view()
+      if (v.ping.kind === 'cooldown') v.ping = { kind: 'ready' }
+    }, CALL_COOLDOWN_MS)
+  }
+
   const missed = () => {
     state.missedCall = { at: now() }
   }
@@ -324,6 +345,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       add(peerSide, text ?? REPLIES[idSeq % REPLIES.length]!)
       // A reply from the friend resets our ping counter.
       pingPushes = 0
+      clearTimeout(pingTimer)
       view().ping = { kind: 'ready' }
     },
     seedChat() {
@@ -348,9 +370,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     clearChat() {
       state.messages.splice(0)
       state.pendingIds = []
-    },
-    nudge() {
-      state.nudgeAt = now()
     },
     incoming() {
       const v = view()
@@ -395,6 +414,8 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     },
     setPingView(kind) {
       const v = view()
+      clearTimeout(pingTimer)
+      if (kind === 'cooldown') return pausePing()
       pingPushes = kind === 'exhausted' ? PING_PUSHES_PER_ROUND : 0
       v.ping = kind === 'ready' ? { kind } : { kind, until: now() + LOCK_MS }
     },

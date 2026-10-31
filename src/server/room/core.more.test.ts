@@ -156,7 +156,8 @@ describe('room: call rules across both sides', () => {
     expect(room.view('a', t).call.kind).toBe('nobodyHome')
     expect(room.view('a', t).ping.kind).toBe('exhausted')
     room.connect('b', t)
-    room.handle('b', { t: 'replied' }, t)
+    room.handle('b', { t: 'wrote' }, t)
+    expect(room.state.sides.a.ping.pushesSent).toBe(0)
     expect(room.view('a', t).ping).toEqual({ kind: 'ready' })
     expect(room.view('a', t).call.kind).toBe('nobodyHome')
     room.handle('b', { t: 'call' }, t + 1)
@@ -182,6 +183,11 @@ describe('room: call rules across both sides', () => {
 })
 
 describe('room: push for a ringing call when the callee turns unreachable', () => {
+  // The friend can receive pushes (the room skips an invitation to a device without one).
+  beforeEach(() => {
+    room.handle('b', { t: 'pushSubscribe', sub: { endpoint: 'https://push.test/b', keys: { p256dh: 'p', auth: 'a' } } }, T0)
+  })
+
   it('pushes when the hidden callee grace runs out while the call still rings', () => {
     room.connect('a', T0)
     room.connect('b', T0)

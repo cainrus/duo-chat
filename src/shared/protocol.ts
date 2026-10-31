@@ -48,8 +48,14 @@ export type ClientToServer =
   | { t: 'callAccept' }
   | { t: 'callEnd' }
   | { t: 'ping' }
-  /** Sent when this side sent a chat message to the peer (resets the peer's ping counter). */
-  | { t: 'replied' }
+  /**
+   * This side wrote a chat message (the text itself never comes here). Resets the friend's
+   * invitation counter towards us; to an absent friend it may send a content-free invitation
+   * push, from the shared budget.
+   */
+  | { t: 'wrote' }
+  /** This device wants no pushes at all (calls, pings, messages). Re-sent on every connect. */
+  | { t: 'pushMute'; muted: boolean }
   | { t: 'pushSubscribe'; sub: PushSubscriptionJSONLike }
 
 /** Full UI-relevant state for one side. Sent on connect and after every change. */
@@ -67,7 +73,7 @@ export type RoomView = {
   inCall: boolean
 }
 
-export type PingResult = 'nudged' | 'pushed' | 'held'
+export type PingResult = 'pushed' | 'held'
 
 /**
  * cancelled: the caller stopped waiting (switched OFF, hid or closed the app) before the
@@ -78,15 +84,17 @@ export type CallEndReason = 'cancelled' | 'hangup'
 export type ServerToClient =
   | { t: 'view'; view: RoomView }
   | { t: 'signal'; env: SealedEnvelope }
-  /** The peer pressed ping while this side is present: show an in-app nudge. */
-  | { t: 'nudge' }
   /**
-   * What became of this side's ping: nudged (the friend is here), pushed (a Web Push went
-   * out), held (rationed by the owner's rules, or the friend has no push subscription).
+   * What became of this side's ping (sent only while the friend is away; a ping while she is
+   * in the app is ignored): pushed (a Web Push went out), held (rationed by the owner's rules,
+   * or the friend cannot get pushes).
    */
   | { t: 'pingResult'; result: PingResult }
   | { t: 'callEnded'; reason: CallEndReason }
   | { t: 'error'; code: 'unauthorized' | 'bad-request' | 'not-allowed' }
 
-/** Web Push payload (JSON). The service worker adds the peer's name, which it keeps locally. */
-export type PushPayload = { kind: 'call' } | { kind: 'ping' }
+/**
+ * Web Push payload (JSON). Every kind shows the same invitation («<имя> зовёт тебя 👋»); the
+ * kind only decides where a click leads. The service worker adds the peer's name, kept locally.
+ */
+export type PushPayload = { kind: 'ping' | 'message' | 'call' }

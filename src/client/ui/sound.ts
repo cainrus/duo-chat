@@ -1,28 +1,6 @@
-// Sounds synthesized with WebAudio (no audio files to fetch): a short two-tone "ding" for the
-// nudge, and a soft repeating chime while a call rings towards us.
+// A soft repeating chime while the friend waits for us in a call, synthesized with WebAudio
+// (no audio files to fetch).
 let ctx: AudioContext | null = null
-
-export function playDing(): void {
-  try {
-    ctx ??= new AudioContext()
-    const t0 = ctx.currentTime
-    for (const [i, freq] of [880, 1320].entries()) {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.value = freq
-      const start = t0 + i * 0.18
-      gain.gain.setValueAtTime(0.0001, start)
-      gain.gain.exponentialRampToValueAtTime(0.3, start + 0.02)
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.35)
-      osc.connect(gain).connect(ctx.destination)
-      osc.start(start)
-      osc.stop(start + 0.4)
-    }
-  } catch {
-    // No audio (autoplay policy, unsupported): the animation is enough.
-  }
-}
 
 /** How often the soft ring repeats while the friend waits for us in a call. */
 export const RING_EVERY_MS = 3_000
@@ -32,7 +10,7 @@ export const RING_EVERY_MS = 3_000
  */
 export const RING_FOR_MS = 60_000
 
-/** One soft, low chime: quieter and shorter than the nudge ding. */
+/** One soft, low two-note chime. */
 function playChime(): void {
   try {
     ctx ??= new AudioContext()

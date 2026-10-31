@@ -12,6 +12,11 @@ export type PushEnv = {
   swTimeoutMs?: number
 }
 
+/** Push works here and the person already allowed notifications. */
+export function notificationsGranted(): boolean {
+  return pushSupported() && Notification.permission === 'granted'
+}
+
 export function pushSupported(): boolean {
   return (
     typeof Notification !== 'undefined' &&

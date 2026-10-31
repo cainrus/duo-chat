@@ -14,7 +14,8 @@ describe('client frame parsing', () => {
       { t: 'callAccept' },
       { t: 'callEnd' },
       { t: 'ping' },
-      { t: 'replied' },
+      { t: 'wrote' },
+      { t: 'pushMute', muted: true },
     ]
     for (const f of frames) expect(parseClientFrame(j(f))).toEqual(f)
   })
@@ -37,6 +38,8 @@ describe('client frame parsing', () => {
       j({ t: 'call', kind: 'video' }),
       // There is no decline.
       j({ t: 'callDecline' }),
+      j({ t: 'pushMute', muted: 'yes' }),
+      j({ t: 'pushMute' }),
       j({ t: 'visibility', visible: 'yes' }),
       j({ t: 'ping', extra: 1 }),
       j({ t: 'signal', env: { v: 2, iv: 'a', ct: 'b' } }),

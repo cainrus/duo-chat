@@ -60,7 +60,8 @@ onScopeDispose(() => stopRing?.())
         <span v-else-if="view?.call.kind === 'nobodyHome'" class="status-warn" data-test="nobody-home">никого нет</span>
       </div>
     </div>
-    <PingButton v-if="view" :view="view.ping" @press="emit('ping')" />
+    <!-- «Позвать» exists only while she is away; in the chat they just talk. -->
+    <PingButton v-if="view?.peerPaired && !view.peerPresent" :view="view.ping" @press="emit('ping')" />
   </section>
 </template>
 

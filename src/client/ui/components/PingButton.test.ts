@@ -1,25 +1,41 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import pingSource from './PingButton.vue?raw'
 import PingButton from './PingButton.vue'
 
 describe('PingButton', () => {
-  it('ready: shows the label, no badge', () => {
+  it('ready: shows the label and emits press', async () => {
     const w = mount(PingButton, { props: { view: { kind: 'ready' } } })
     expect(w.text()).toContain('Позвать')
-    expect(w.find('.van-badge').exists()).toBe(false)
-    expect(w.get('button').classes()).not.toContain('muted')
+    expect(w.get('button').attributes('aria-disabled')).toBe('false')
+    await w.get('button').trigger('click')
+    expect(w.emitted('press')).toHaveLength(1)
   })
 
-  it('exhausted: badge + "сегодня всё", and still pressable (never disabled)', async () => {
+  it('cooldown: disabled, a ring and the seconds left (also in the label); taps do nothing', async () => {
+    const w = mount(PingButton, { props: { view: { kind: 'cooldown', until: Date.now() + 42_000 } } })
+    expect(w.attributes('data-state')).toBe('cooldown')
+    expect(w.find('svg.ring').exists()).toBe(true)
+    expect(w.text()).toMatch(/4[12] с/)
+    expect(w.get('button').attributes('aria-label')).toMatch(/подожди 4[12] с/)
+    expect(w.get('button').attributes('aria-disabled')).toBe('true')
+    await w.get('button').trigger('click')
+    expect(w.emitted('press')).toBeUndefined()
+  })
+
+  it('exhausted: a calm «🌙 завтра», disabled', async () => {
     const w = mount(PingButton, { props: { view: { kind: 'exhausted', until: Date.now() + 1000 } } })
     expect(w.attributes('data-state')).toBe('exhausted')
-    expect(w.text()).toContain('сегодня всё')
-    expect(w.get('.van-badge').text()).toBe('!')
-    const button = w.get('button')
-    expect(button.classes()).toContain('muted')
-    expect(button.attributes('disabled')).toBeUndefined()
-    await button.trigger('click')
-    expect(w.emitted('press')).toHaveLength(1)
+    expect(w.text()).toContain('🌙')
+    expect(w.text()).toContain('завтра')
+    expect(w.get('button').attributes('aria-disabled')).toBe('true')
+    await w.get('button').trigger('click')
+    expect(w.emitted('press')).toBeUndefined()
+  })
+
+  it('the little shake on a disabled tap stops for people who asked for less motion', () => {
+    const block = pingSource.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/)
+    expect(block?.[1]).toMatch(/\.shake \{\s*animation: none/)
   })
 })

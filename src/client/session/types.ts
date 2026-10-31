@@ -45,14 +45,16 @@ export type DuoState = {
   pendingIds: string[]
   /** The direct channel to the friend is open, so messages go out right now. */
   directOpen: boolean
-  /** Time of the last nudge from the friend; the UI animates when it changes. */
-  nudgeAt: number | null
   /**
-   * What became of our last ping (from the server): nudged (she is here), pushed (a
+   * What became of our last ping (from the server): pushed (a
    * notification went out), held (rationed, or she has no notifications). The UI shows a
    * short toast when `at` changes.
    */
   lastPing: { result: PingResult; at: number } | null
+  /** The bell: this device asked for no pushes (kept on the device, re-sent on every connect). */
+  pushMuted: boolean
+  /** The browser allows notifications for this app (permission granted and push supported). */
+  notificationsAllowed: boolean
   /** This side's call switch. Back to 'off' whenever the call ends. */
   myMode: CallMode
   /**
@@ -93,8 +95,17 @@ export interface DuoSession {
 
   // --- chat ---
   sendText(text: string): void
-  /** "Come to the chat". Never disabled; the server decides nudge / push / silent. */
+  /**
+   * "Come to the chat": an invitation push to a friend who is away (the button is hidden while
+   * she is in the app). The server decides push / held by the shared invitation budget.
+   */
   ping(): void
+  /**
+   * The bell: true = this device gets no pushes at all (calls, pings, messages). Turning
+   * pushes on when the browser never allowed notifications asks for permission first
+   * (call from a tap).
+   */
+  setPushMuted(muted: boolean): Promise<void>
 
   // --- calls: one switch (there is no decline: a call nobody joins rings out) ---
   /**

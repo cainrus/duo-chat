@@ -19,8 +19,8 @@ import { deviceConfigStore, isProfile, type DeviceConfig, type DeviceConfigStore
 import { idbPersistence } from '../messages/idbPersistence'
 import { MessageStore, MAX_MESSAGE_LENGTH, type MessagePersistence } from '../messages/store'
 import { connectServerLink, type LinkStatus, type ServerLink } from '../net/serverLink'
-import { parseCallPushUrl } from '../push/notification'
-import { currentSubscription, requestNotifications } from '../push/subscribe'
+import { NOTIFICATION_TAG, parseCallPushUrl } from '../push/notification'
+import { currentSubscription, notificationsGranted, requestNotifications } from '../push/subscribe'
 import { PeerLink, type DataFrame } from '../rtc/peerLink'
 import type { CallMode, Connection, DuoSession, DuoState, NotificationResult, Profile } from './types'
 
@@ -44,6 +44,8 @@ export type PageEnv = {
    * back/forward cache). Fires before onVisibility(false).
    */
   onLeave(cb: () => void): () => void
+  /** Closes every duo notification on screen (the app is open, so they are old news). */
+  closeNotifications(): void
 }
 
 export type LiveDeps = {
@@ -66,6 +68,8 @@ export type LiveDeps = {
   push: {
     request(onSubscription: (sub: PushSubscriptionJSONLike) => void): Promise<NotificationResult>
     current(): Promise<PushSubscriptionJSONLike | null>
+    /** Notifications are allowed (permission granted, push supported). */
+    allowed(): boolean
   }
   now(): number
 }
@@ -158,6 +162,15 @@ function browserPage(): PageEnv | null {
       window.addEventListener('pagehide', cb)
       return () => window.removeEventListener('pagehide', cb)
     },
+    closeNotifications() {
+      const sw = navigator.serviceWorker
+      if (!sw) return
+      // `ready` never settles without a worker; nothing waits on this.
+      void sw.ready
+        .then((reg) => reg.getNotifications({ tag: NOTIFICATION_TAG }))
+        .then((shown) => shown.forEach((n) => n.close()))
+        .catch(() => {})
+    },
   }
 }
 
@@ -181,6 +194,7 @@ function defaultDeps(opts: LiveOptions): LiveDeps {
     push: {
       request: (onSub) => requestNotifications({ apiBase, fetch: fetcher }, onSub),
       current: () => currentSubscription({ apiBase, fetch: fetcher }),
+      allowed: () => notificationsGranted(),
     },
     now: () => Date.now(),
   }
@@ -214,8 +228,9 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     messages: [],
     pendingIds: [],
     directOpen: false,
-    nudgeAt: null,
     lastPing: null,
+    pushMuted: false,
+    notificationsAllowed: false,
     myMode: 'off',
     peerMode: 'off',
     videoUnlockAt: null,
@@ -290,6 +305,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
           endCall()
         }
         rt?.link.setVisible(visible)
+        if (visible) page.closeNotifications()
         if (visible && rt) {
           // Timers may have slept with the page.
           rt.store.sweep()
@@ -568,9 +584,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     switch (msg.t) {
       case 'view':
         return onView(msg.view)
-      case 'nudge':
-        state.nudgeAt = deps.now()
-        return
       case 'pingResult':
         state.lastPing = { result: msg.result, at: deps.now() }
         return
@@ -689,7 +702,11 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     state.self = config.side
     state.me = config.me
     state.peer = config.peer
+    state.pushMuted = config.pushMuted ?? false
+    state.notificationsAllowed = deps.push.allowed()
     state.phase = 'ready'
+    // The app is open: notifications on screen are old news.
+    page?.closeNotifications()
 
     const link = deps.connectServerLink({ wsBase: deps.wsBase, roomId: keys.roomId, deviceToken: config.deviceToken })
     const peer = deps.createPeerLink({
@@ -703,7 +720,10 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     r.offs.push(
       link.onMessage(onServer),
       link.onStatus((s) => {
-        if (rt === r) state.connection = connectionOf(s)
+        if (rt !== r) return
+        state.connection = connectionOf(s)
+        // The bell's choice goes to the server on every (re)connect.
+        if (s === 'open') link.send({ t: 'pushMute', muted: state.pushMuted })
       }),
       store.onChange(syncMessages),
       peer.onData(onData),
@@ -713,6 +733,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       }),
     )
     state.connection = connectionOf(link.status)
+    if (link.status === 'open') link.send({ t: 'pushMute', muted: state.pushMuted })
     retryTimer = setInterval(retryDirect, DIRECT_RETRY_MS)
     link.setVisible(page ? page.isVisible() : true)
     syncMessages()
@@ -811,10 +832,12 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
     async enableNotifications() {
       try {
-        return await deps.push.request((sub) => {
+        const result = await deps.push.request((sub) => {
           pendingSub = sub
           rt?.link.send({ t: 'pushSubscribe', sub })
         })
+        if (result === 'granted') state.notificationsAllowed = true
+        return result
       } catch (err) {
         console.debug('[live] notifications failed', err)
         return 'unsupported'
@@ -833,11 +856,23 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
         return
       }
       flushOutbox()
-      rt.link.send({ t: 'replied' })
+      // The server never sees the text; it may send the absent friend a content-free invitation.
+      rt.link.send({ t: 'wrote' })
     },
 
     ping() {
       rt?.link.send({ t: 'ping' })
+    },
+
+    async setPushMuted(muted) {
+      // Turning pushes on without permission asks first (this stays the first await of the tap).
+      if (!muted && !state.notificationsAllowed && (await session.enableNotifications()) !== 'granted') return
+      state.pushMuted = muted
+      const r = rt
+      if (!r) return
+      r.link.send({ t: 'pushMute', muted })
+      r.config = { ...r.config, pushMuted: muted }
+      await deps.config.save(r.config).catch((err) => console.debug('[live] cannot save the bell', err))
     },
 
     // No getUserMedia here: the mic opens only once the server reports the call connected.

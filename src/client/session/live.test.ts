@@ -8,7 +8,7 @@ import type { MessagePersistence, StoredMessage } from '../messages/store'
 import type { LinkStatus, ServerLink } from '../net/serverLink'
 import type { DataFrame } from '../rtc/peerLink'
 import { ACK_RESEND_MS, createLiveSession, DIRECT_RETRY_MS, ERROR_TTL_MS, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
-import type { Profile } from './types'
+import type { NotificationResult, Profile } from './types'
 
 // ---------- fakes ----------
 
@@ -188,8 +188,16 @@ type Harness = {
   messages: ReturnType<typeof memoryMessages>
   fetchCalls: { url: string; init?: RequestInit }[]
   media: { constraints: MediaStreamConstraints[]; streams: Stream[]; fail: Error | null }
-  page: { visible: boolean; emit: (v: boolean) => void; leave: () => void; search: string; click: (url: string) => void }
-  push: { subs: PushSubscriptionJSONLike[] }
+  page: {
+    visible: boolean
+    emit: (v: boolean) => void
+    leave: () => void
+    search: string
+    click: (url: string) => void
+    /** How many times the session closed the shown notifications. */
+    closed: number
+  }
+  push: { subs: PushSubscriptionJSONLike[]; allowed: boolean; result: NotificationResult }
   clock: { now: number }
   link: () => FakeLink
   peer: () => FakePeer
@@ -220,6 +228,7 @@ function harness(opts: {
   const clickCbs = new Set<(u: string) => void>()
   const leaveCbs = new Set<() => void>()
   const pageState = {
+    closed: 0,
     visible: true,
     search: opts.search ?? '',
     emit: (v: boolean) => {
@@ -254,8 +263,11 @@ function harness(opts: {
       leaveCbs.add(cb)
       return () => leaveCbs.delete(cb)
     },
+    closeNotifications: () => {
+      pageState.closed++
+    },
   }
-  const push = { subs: [] as PushSubscriptionJSONLike[] }
+  const push = { subs: [] as PushSubscriptionJSONLike[], allowed: false, result: 'granted' as NotificationResult }
   const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     fetchCalls.push({ url, init })
@@ -298,12 +310,14 @@ function harness(opts: {
     page,
     push: {
       request: async (onSub) => {
+        if (push.result !== 'granted') return push.result
         const sub = { endpoint: 'https://push.test/1', keys: { p256dh: 'p', auth: 'a' } }
         push.subs.push(sub)
         onSub(sub)
         return 'granted'
       },
       current: async () => opts.currentSub ?? null,
+      allowed: () => push.allowed,
     },
     now: () => clock.now,
   }
@@ -432,12 +446,9 @@ describe('live session: server link', () => {
     expect(h.link().visible).toEqual([true, false, true])
   })
 
-  it('nudge sets nudgeAt; ping sends a ping frame', async () => {
+  it('ping sends a ping frame; its result goes to state', async () => {
     h = harness({ config })
     await h.session.ready
-    h.clock.now = T0 + 42
-    h.link().deliver({ t: 'nudge' })
-    expect(h.session.state.nudgeAt).toBe(T0 + 42)
     h.session.ping()
     expect(h.link().sentOf('ping')).toHaveLength(1)
     expect(h.session.state.lastPing).toBeNull()
@@ -533,6 +544,54 @@ describe('live session: server link', () => {
     expect(h.link().sentOf('pushSubscribe')).toHaveLength(2)
   })
 
+  it('closes the shown notifications when the app starts and whenever it is shown again', async () => {
+    h = harness({ config })
+    await h.session.ready
+    expect(h.page.closed).toBe(1)
+    h.page.emit(false)
+    expect(h.page.closed).toBe(1)
+    h.page.emit(true)
+    expect(h.page.closed).toBe(2)
+  })
+
+  it('the bell: muting is sent, saved on the device and re-sent on every connect', async () => {
+    h = harness({ config })
+    h.push.allowed = true
+    await h.session.ready
+    expect(h.session.state).toMatchObject({ pushMuted: false, notificationsAllowed: true })
+    h.link().setStatus('open')
+    expect(h.link().sentOf('pushMute')).toEqual([{ t: 'pushMute', muted: false }])
+    await h.session.setPushMuted(true)
+    expect(h.session.state.pushMuted).toBe(true)
+    expect(h.link().sentOf('pushMute').at(-1)).toEqual({ t: 'pushMute', muted: true })
+    expect(h.config.value()!.pushMuted).toBe(true)
+    h.link().setStatus('closed')
+    h.link().setStatus('open')
+    expect(h.link().sentOf('pushMute').at(-1)).toEqual({ t: 'pushMute', muted: true })
+
+    // A restart keeps the choice and tells the server again.
+    h.session.dispose()
+    h = harness({ config: h.config.value()! })
+    await h.session.ready
+    expect(h.session.state.pushMuted).toBe(true)
+    h.link().setStatus('open')
+    expect(h.link().sentOf('pushMute')).toEqual([{ t: 'pushMute', muted: true }])
+  })
+
+  it('the bell: turning pushes on without permission asks first, and stays off if refused', async () => {
+    h = harness({ config: { ...config, pushMuted: true } })
+    await h.session.ready
+    expect(h.session.state.notificationsAllowed).toBe(false)
+    h.push.result = 'denied'
+    await h.session.setPushMuted(false)
+    expect(h.session.state.pushMuted).toBe(true)
+    h.push.result = 'granted'
+    await h.session.setPushMuted(false)
+    expect(h.session.state).toMatchObject({ pushMuted: false, notificationsAllowed: true })
+    expect(h.link().sentOf('pushSubscribe')).toHaveLength(1)
+    expect(h.link().sentOf('pushMute').at(-1)).toEqual({ t: 'pushMute', muted: false })
+  })
+
   it('a subscription made before pairing is sent once the link exists', async () => {
     h = harness()
     await h.session.ready
@@ -556,7 +615,7 @@ describe('live session: messages', () => {
     h.session.sendText('🦄')
     expect(h.session.state.messages.map((m) => m.text)).toEqual(['привет', '🦄'])
     expect(h.peer().out).toEqual([])
-    expect(h.link().sentOf('replied')).toHaveLength(2)
+    expect(h.link().sentOf('wrote')).toHaveLength(2)
 
     expect(h.session.state.pendingIds).toEqual(h.session.state.messages.map((m) => m.id))
 
@@ -599,7 +658,7 @@ describe('live session: messages', () => {
     expect(h.session.state.pendingIds).toEqual([h.session.state.messages[0]!.id])
     h.peer().receive({ t: 'ack', ids: [h.session.state.messages[0]!.id] })
     expect(h.session.state.pendingIds).toEqual([])
-    expect(h.link().sentOf('replied')).toHaveLength(1)
+    expect(h.link().sentOf('wrote')).toHaveLength(1)
   })
 
   it('a message sent into a channel that silently died stays pending and goes again on the next open', async () => {
@@ -673,7 +732,7 @@ describe('live session: messages', () => {
     h.session.sendText('   ')
     h.session.sendText('x'.repeat(5000))
     expect(h.session.state.messages).toEqual([])
-    expect(h.link().sentOf('replied')).toHaveLength(0)
+    expect(h.link().sentOf('wrote')).toHaveLength(0)
     expect(h.session.state.error).toMatch(/длинное/)
     h.session.dismissError()
     expect(h.session.state.error).toBeNull()
