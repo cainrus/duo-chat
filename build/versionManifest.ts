@@ -69,10 +69,16 @@ export function versionManifest(options: VersionManifestOptions = {}): Plugin {
     },
     // closeBundle runs after Vite has written the bundle and copied public/,
     // so walking the output directory sees exactly what will be deployed.
-    closeBundle(error?: Error) {
-      if (error) return
-      const dir = resolve(root, outDir)
-      writeManifest(dir, options.commit ?? resolveCommit(root))
+    // 'post' + sequential: runs after every other plugin's closeBundle has finished
+    // (vite-plugin-pwa writes sw.js there), so the service worker is hashed too.
+    closeBundle: {
+      order: 'post',
+      sequential: true,
+      handler(error?: Error) {
+        if (error) return
+        const dir = resolve(root, outDir)
+        writeManifest(dir, options.commit ?? resolveCommit(root))
+      },
     },
   }
 }

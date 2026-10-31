@@ -6,5 +6,5 @@
     "jsx": "preserve"
   },
   "include": ["src/client/**/*.ts", "src/client/**/*.vue", "src/shared/**/*.ts"],
-  "exclude": ["src/client/push/sw.ts"]
+  "exclude": ["src/client/push/sw.ts", "src/client/push/sw-shim.d.ts"]
 }
