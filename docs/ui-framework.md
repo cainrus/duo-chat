@@ -57,8 +57,8 @@ components, passed through each component's `#icon` slot.
 **Chat (home)**
 - Shell: a plain flex column at `height: 100dvh`, with
   `padding: env(safe-area-inset-*)` via `van-safe-area-top` / `van-safe-area-bottom`.
-- Header: friend avatar `van-image round width="56" height="56"` wrapped in
-  `van-badge dot :color="present ? success : gray"` (the "friend is here" indicator).
+- Header: no names, avatars or presence (owner, 2026-10-31); only the offline sign
+  and the bell.
 - Message list: our `ChatBubble.vue`: background `var(--van-primary-color)` (mine) or
   `var(--van-background-2)` (theirs), `border-radius: var(--van-radius-lg)`. Emoji-only
   messages get a large font (48px). "Missed call" marker: system bubble plus
@@ -73,8 +73,8 @@ components, passed through each component's `#icon` slot.
 - Call bar under the header (calls live inside the chat; owner, 2026-10-31): one
   segmented call switch OFF | AUDIO | VIDEO (`CallSwitch.vue`, plain `<button
   role="radio">` segments on Vant tokens, Phosphor icons phone-slash / phone /
-  video-camera, 64×56 targets). Under it one status line: «ждём <имя>…», the call
-  timer, «<имя> зовёт», «снова через» + `van-count-down`, or «никого нет». The ping
+  video-camera, 64×56 targets). Under it one status line: «ждём…», the call
+  timer, «Тебя зовут», «снова через» + `van-count-down`, or «никого нет». The ping
   button sits at the right of the bar, only while the friend is away
   (`PingButton.vue`, a plain button on Vant tokens):
   - Ready: warning colour, waving hand.
@@ -89,21 +89,19 @@ components, passed through each component's `#icon` slot.
 **Setup (adult, one time)**
 - `van-steps direction="vertical" :active`, with sections in
   `van-cell-group inset`:
-  1. Name: `van-field label="Имя" maxlength="20"`. Avatar: `van-grid :column-num="4"
-     square` of bundled avatar images, the selected one marked with `van-badge`.
-  2. Pairing, first device: QR shown in a `van-image` whose `src` is a
+  1. Pairing, first device: QR shown in a `van-image` whose `src` is a
      `data:image/svg+xml` URL rendered by `uqr`, plus a `van-button` "Скопировать
      ссылку" → `showToast`.
-  3. Pairing, second device: the scanner is a `<video>` inside a full-height
+  2. Pairing, second device: the scanner is a `<video>` inside a full-height
      `van-popup` and runs `jsqr` on frames. Fallback: `van-field` to paste the link.
-  4. Install: if `matchMedia('(display-mode: standalone)')` is false, show
+  3. Install: if `matchMedia('(display-mode: standalone)')` is false, show
      `van-steps` with icon steps ("Поделиться → На экран «Домой»"). The QR scan must
      happen inside the installed PWA, because on iPadOS the home-screen app's storage
      is separate from Safari's.
-  5. Notifications: `van-button type="primary" size="large" round` calls
+  4. Notifications: `van-button type="primary" size="large" round` calls
      `Notification.requestPermission()` (iOS needs a tap inside the installed PWA).
      Show the result with `van-cell :title :value` status rows.
-  6. Reset/re-pair: `showConfirmDialog({ title, message })`.
+  5. Reset/re-pair: `showConfirmDialog({ title, message })`.
 
 ## 4. Theme config
 

@@ -50,8 +50,8 @@ export type ClientToServer =
   | { t: 'ping' }
   /**
    * This side wrote a chat message (the text itself never comes here). Resets the friend's
-   * invitation counter towards us; to an absent friend it may send a content-free invitation
-   * push, from the shared budget.
+   * invitation counter towards us and spends an invitation from the shared budget (a
+   * content-free push only if she is away).
    */
   | { t: 'wrote' }
   /** This device wants no pushes at all (calls, pings, messages). Re-sent on every connect. */
@@ -73,8 +73,6 @@ export type RoomView = {
   inCall: boolean
 }
 
-export type PingResult = 'pushed' | 'held'
-
 /**
  * cancelled: the caller stopped waiting (switched OFF, hid or closed the app) before the
  * friend joined. hangup: a connected call ended. There is no decline and no ring timeout.
@@ -84,17 +82,11 @@ export type CallEndReason = 'cancelled' | 'hangup'
 export type ServerToClient =
   | { t: 'view'; view: RoomView }
   | { t: 'signal'; env: SealedEnvelope }
-  /**
-   * What became of this side's ping (sent only while the friend is away; a ping while she is
-   * in the app is ignored): pushed (a Web Push went out), held (rationed by the owner's rules,
-   * or the friend cannot get pushes).
-   */
-  | { t: 'pingResult'; result: PingResult }
   | { t: 'callEnded'; reason: CallEndReason }
   | { t: 'error'; code: 'unauthorized' | 'bad-request' | 'not-allowed' }
 
 /**
- * Web Push payload (JSON). Every kind shows the same invitation («<имя> зовёт тебя 👋»); the
- * kind only decides where a click leads. The service worker adds the peer's name, kept locally.
+ * Web Push payload (JSON). Every kind shows the same notification («Подружка онлайн 👋»); the
+ * kind only decides where a click leads.
  */
 export type PushPayload = { kind: 'ping' | 'message' | 'call' }

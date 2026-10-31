@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CALL_COOLDOWN_MS, LOCK_MS } from '@shared/constants'
-import { decideInvite, initialPingPushes, onPingHeld, onPingReply, pingButtonView, pingChangesAt } from './pingPushes'
+import { decideInvite, initialPingPushes, onPingReply, pingButtonView, pingChangesAt } from './pingPushes'
 
 const T0 = 5_000_000
 
@@ -34,17 +34,9 @@ describe('invitation budget (ping, message, voice room share it)', () => {
   })
 })
 
-describe('a ping that could not push', () => {
-  it('spends nothing, but the button pauses like after a push', () => {
-    const held = onPingHeld(initialPingPushes(), T0)
-    expect(held.pushesSent).toBe(0)
-    expect(pingButtonView(held, T0 + 1)).toEqual({ kind: 'cooldown', until: T0 + CALL_COOLDOWN_MS })
-    expect(pingChangesAt(held, T0 + 1)).toBe(T0 + CALL_COOLDOWN_MS)
-    expect(pingButtonView(held, T0 + CALL_COOLDOWN_MS)).toEqual({ kind: 'ready' })
-  })
-
-  it('state saved before the field existed still loads', () => {
-    const old = { pushesSent: 0, lastPushAt: null, exhaustedSince: null }
+describe('older saved state', () => {
+  it('still loads', () => {
+    const old = { pushesSent: 0, lastPushAt: null, exhaustedSince: null, lastTapAt: 5 }
     expect(pingButtonView(old, T0)).toEqual({ kind: 'ready' })
     expect(decideInvite(old, T0).push).toBe(true)
   })

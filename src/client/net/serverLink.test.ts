@@ -116,14 +116,11 @@ describe('connectServerLink', () => {
     ws.serverSend('42')
     ws.serverSend({ t: 'callEnded', reason: 'cancelled' })
     ws.serverSend({ t: 'pingResult', result: 'pushed' })
-    ws.serverSend({ t: 'pingResult', result: 'nudged' })
-    ws.serverSend({ t: 'pingResult' })
     off()
     ws.serverSend({ t: 'callEnded', reason: 'hangup' })
     expect(got).toEqual([
       { t: 'callEnded', reason: 'hangup' },
       { t: 'callEnded', reason: 'cancelled' },
-      { t: 'pingResult', result: 'pushed' },
     ])
   })
 

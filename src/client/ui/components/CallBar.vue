@@ -16,7 +16,6 @@ const s = duo.state
 const now = useNow()
 
 const view = computed(() => s.view)
-const peerName = computed(() => s.peer?.name ?? 'Подружка')
 const calling = computed(() => !!view.value?.incoming && s.myMode === 'off')
 
 // The contract has no call start time, so the UI notes when the call connected.
@@ -51,8 +50,8 @@ onScopeDispose(() => stopRing?.())
         <template v-if="view?.inCall">
           <span class="status-live">{{ elapsed }}</span>
         </template>
-        <span v-else-if="view?.outgoing" data-test="waiting">ждём {{ peerName }}…</span>
-        <span v-else-if="calling" class="status-calling" data-test="peer-calling">{{ peerName }} зовёт</span>
+        <span v-else-if="view?.outgoing" data-test="waiting">ждём…</span>
+        <span v-else-if="calling" class="status-calling" data-test="peer-calling">Тебя зовут</span>
         <template v-else-if="view?.call.kind === 'cooldown'">
           <span class="status-muted">снова через</span>
           <van-count-down :time="msLeft(view.call.until)" format="mm:ss" class="status-timer" />
@@ -60,8 +59,8 @@ onScopeDispose(() => stopRing?.())
         <span v-else-if="view?.call.kind === 'nobodyHome'" class="status-warn" data-test="nobody-home">никого нет</span>
       </div>
     </div>
-    <!-- «Позвать» exists only while she is away; in the chat they just talk. -->
-    <PingButton v-if="view?.peerPaired && !view.peerPresent" :view="view.ping" @press="emit('ping')" />
+    <!-- Always there, whether or not she is in the app: it must not reveal her presence. -->
+    <PingButton v-if="view?.peerPaired" :view="view.ping" @press="emit('ping')" />
   </section>
 </template>
 

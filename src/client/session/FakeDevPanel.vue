@@ -31,7 +31,6 @@ const groups: { title: string; items: Btn[] }[] = [
       { label: 'Не подключена', run: () => dev.peerUnpaired() },
       { label: 'Пишет', run: () => dev.peerSays() },
       { label: 'Эмодзи', run: () => dev.peerSays('🦄🌈') },
-      { label: 'Пуши у неё вкл/выкл', run: () => (dev.options.peerHasPush = !dev.options.peerHasPush) },
     ],
   },
   {
@@ -49,9 +48,9 @@ const groups: { title: string; items: Btn[] }[] = [
       { label: 'Звонок: готов', run: () => dev.setCallView('ready') },
       { label: 'Звонок: пауза', run: () => dev.setCallView('cooldown') },
       { label: 'Никого нет', run: () => dev.setCallView('nobodyHome') },
-      { label: 'Позвать: готов', run: () => dev.setPingView('ready') },
-      { label: 'Позвать: пауза', run: () => dev.setPingView('cooldown') },
-      { label: 'Позвать: всё', run: () => dev.setPingView('exhausted') },
+      { label: 'Онлайн: готов', run: () => dev.setPingView('ready') },
+      { label: 'Онлайн: пауза', run: () => dev.setPingView('cooldown') },
+      { label: 'Онлайн: всё', run: () => dev.setPingView('exhausted') },
     ],
   },
   {
@@ -80,7 +79,7 @@ function run(b: Btn) {
   <van-popup v-model:show="open" position="right" :style="{ width: 'min(360px, 88vw)', height: '100%' }" class="dev-panel" data-test="dev-panel">
     <div class="dev-body">
       <div class="dev-state">
-        phase={{ s.phase }} · {{ s.connection }} · peer {{ s.view?.peerPresent ? 'here' : 'away' }} · me={{ s.myMode }} her={{ s.peerMode }} · call={{ s.view?.call.kind }} · ping={{ s.view?.ping.kind }} · push {{ dev.options.peerHasPush ? 'on' : 'off' }} · last ping={{ s.lastPing?.result ?? '-' }}
+        phase={{ s.phase }} · {{ s.connection }} · peer {{ s.view?.peerPresent ? 'here' : 'away' }} · me={{ s.myMode }} her={{ s.peerMode }} · call={{ s.view?.call.kind }} · ping={{ s.view?.ping.kind }} · bell {{ s.pushMuted ? 'off' : 'on' }}
       </div>
       <section v-for="g in groups" :key="g.title" class="dev-group">
         <h3 class="dev-title">{{ g.title }}</h3>

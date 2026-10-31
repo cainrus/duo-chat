@@ -100,10 +100,10 @@ describe('PeerLink: connecting', () => {
     expect(b.opens).toEqual([true])
 
     expect(a.peer.sendData(msg('a', 'hi'))).toBe(true)
-    expect(b.peer.sendData({ t: 'profile', p: { name: 'Аня', avatar: 'cat' } })).toBe(true)
+    expect(b.peer.sendData({ t: 'mode', mode: 'audio' })).toBe(true)
     await until(() => a.frames.length === 1 && b.frames.length === 1)
     expect(b.frames).toEqual([msg('a', 'hi')])
-    expect(a.frames).toEqual([{ t: 'profile', p: { name: 'Аня', avatar: 'cat' } }])
+    expect(a.frames).toEqual([{ t: 'mode', mode: 'audio' }])
   })
 
   it("lets 'a' create the ordered 'chat' channel and passes the ICE servers", async () => {

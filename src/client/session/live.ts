@@ -3,26 +3,26 @@
 //
 // What goes where:
 // - server (ServerLink): presence, call/ping rules, sealed WebRTC signaling. Never chat text.
-// - friend (PeerLink data channel): chat messages, profiles (name + avatar) and the call
+// - friend (PeerLink data channel): chat messages, acks and the call
 //   switch (OFF | AUDIO | VIDEO) during a call.
 // - device (IndexedDB): pairing record (device/config.ts) and unexpired messages.
 //
 // Everything that touches the browser or the network is injectable (LiveDeps), so the flows
 // are unit-tested with fakes (live.test.ts).
 
-import { markRaw, reactive, watch } from 'vue'
+import { markRaw, reactive } from 'vue'
 import type { CallEndReason, PushSubscriptionJSONLike, RoomView, ServerToClient } from '@shared/protocol'
 import type { Side } from '@shared/types'
 import { VIDEO_UNLOCK_MS } from '@shared/constants'
 import { decodeSecret, derivePairKeys, encodeSecret, generatePairSecret, pairingLink } from '../crypto/pair'
-import { deviceConfigStore, isProfile, type DeviceConfig, type DeviceConfigStore } from '../device/config'
+import { deviceConfigStore, type DeviceConfig, type DeviceConfigStore } from '../device/config'
 import { idbPersistence } from '../messages/idbPersistence'
 import { MessageStore, MAX_MESSAGE_LENGTH, type MessagePersistence } from '../messages/store'
 import { connectServerLink, type LinkStatus, type ServerLink } from '../net/serverLink'
 import { NOTIFICATION_TAG, parseCallPushUrl } from '../push/notification'
 import { currentSubscription, notificationsGranted, requestNotifications } from '../push/subscribe'
 import { PeerLink, type DataFrame } from '../rtc/peerLink'
-import type { CallMode, Connection, DuoSession, DuoState, NotificationResult, Profile } from './types'
+import type { CallMode, Connection, DuoSession, DuoState, NotificationResult } from './types'
 
 /** The part of PeerLink the session uses (a fake implements it in tests). */
 export type PeerLinkLike = Pick<
@@ -222,13 +222,10 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     self: null,
     missedCall: null,
     connection: 'offline',
-    me: null,
-    peer: null,
     view: null,
     messages: [],
     pendingIds: [],
     directOpen: false,
-    lastPing: null,
     pushMuted: false,
     notificationsAllowed: false,
     myMode: 'off',
@@ -248,12 +245,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   let resendTimer: ReturnType<typeof setTimeout> | null = null
   /** Pending message id -> when it was last handed to the current data channel. */
   const sentAt = new Map<string, number>()
-  /**
-   * We already answered the friend's profile on the current channel. Her profile proves her
-   * end is open and listening, so we send ours once more then: the copy we sent on open may
-   * have gone out before she was ready for it.
-   */
-  let profileAnswered = false
   /**
    * Local media of the connected call: the microphone, plus the camera's video track while
    * both switches are on VIDEO. Opened only once the server reports the call connected, and
@@ -584,9 +575,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     switch (msg.t) {
       case 'view':
         return onView(msg.view)
-      case 'pingResult':
-        state.lastPing = { result: msg.result, at: deps.now() }
-        return
       case 'callEnded':
         return onCallEnded(msg.reason)
       case 'error':
@@ -629,45 +617,17 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       void syncVideo()
       return
     }
-    if (frame.t === 'profile' && isProfile(frame.p)) {
-      if (!profileAnswered) {
-        profileAnswered = true
-        sendProfile()
-      }
-      const p: Profile = { name: frame.p.name.trim(), avatar: frame.p.avatar }
-      if (state.peer?.name === p.name && state.peer.avatar === p.avatar) return
-      state.peer = p
-      rt.config = { ...rt.config, peer: p }
-      void deps.config.save(rt.config).catch((err) => console.debug('[live] cannot save peer', err))
-    }
-  }
-
-  const sendProfile = () => {
-    const me = state.me ?? rt?.config.me
-    if (!rt || !me || !rt.peer.dataOpen) return
-    rt.peer.sendData({ t: 'profile', p: { name: me.name, avatar: me.avatar } })
   }
 
   const onDataOpen = (open: boolean) => {
     state.directOpen = open
-    profileAnswered = false
     // A new channel: everything still unacked goes again.
     sentAt.clear()
     clearResend()
     if (!open || !rt) return
-    sendProfile()
     sendMode()
     flushOutbox()
   }
-
-  // A new name or picture goes to the friend right away.
-  const stopMeWatch = watch(
-    () => (state.me ? `${state.me.name}\u0000${state.me.avatar}` : null),
-    (now, before) => {
-      if (now !== null && before !== null) sendProfile()
-    },
-    { flush: 'sync' },
-  )
 
   // ---------- lifecycle ----------
 
@@ -700,8 +660,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     if (disposed) return
 
     state.self = config.side
-    state.me = config.me
-    state.peer = config.peer
     state.pushMuted = config.pushMuted ?? false
     state.notificationsAllowed = deps.push.allowed()
     state.phase = 'ready'
@@ -751,7 +709,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     stop()
     state.phase = 'setup'
     state.self = null
-    state.peer = null
     state.messages = []
     setError(T.revoked)
     await deps.config.clear().catch(() => {})
@@ -791,12 +748,11 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   }
 
   /** Pairs this device: claims the slot, replaces any older pairing and its messages. */
-  const pair = async (secret: Uint8Array, side: Side, me: Profile, adminSecret?: string) => {
-    if (!isProfile(me)) throw new Error('Нужно имя и картинка.')
+  const pair = async (secret: Uint8Array, side: Side, adminSecret?: string) => {
     await ready
     const { roomId } = await derivePairKeys(secret)
     const deviceToken = await claim(roomId, side, adminSecret)
-    const config: DeviceConfig = { secret: encodeSecret(secret), side, deviceToken, me: { ...me }, peer: null }
+    const config: DeviceConfig = { secret: encodeSecret(secret), side, deviceToken }
     const replacing = rt !== null
     stop()
     if (replacing) await deps.messages.save([])
@@ -820,14 +776,14 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     state,
     ready,
 
-    async createPair({ adminSecret, me }) {
+    async createPair({ adminSecret }) {
       const secret = generatePairSecret()
-      await pair(secret, 'a', me, adminSecret)
+      await pair(secret, 'a', adminSecret)
       return { link: pairingLink(deps.origin, secret) }
     },
 
-    async joinPair({ secret, me }) {
-      await pair(secret, 'b', me)
+    async joinPair({ secret }) {
+      await pair(secret, 'b')
     },
 
     async enableNotifications() {
@@ -925,7 +881,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
     dispose() {
       disposed = true
-      stopMeWatch()
       if (errorTimer !== null) clearTimeout(errorTimer)
       errorTimer = null
       for (const off of pageOffs) off()

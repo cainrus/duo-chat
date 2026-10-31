@@ -4,5 +4,5 @@
     "lib": ["ES2022", "WebWorker"],
     "types": []
   },
-  "include": ["src/client/push/sw.ts", "src/client/push/sw-shim.d.ts"]
+  "include": ["src/client/push/sw.ts"]
 }

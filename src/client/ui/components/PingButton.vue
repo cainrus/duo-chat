@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// "Come to the chat" (shown only while the friend is away). The server's view decides:
+// «онлайн»: tells the friend I am online (a push only if she is away; the same button and
+// states either way, so it never reveals whether she is here). The server's view decides:
 // ready; cooldown (disabled, a ring counts down the seconds, so a kid sees the wait instead of
 // tapping again and again); exhausted (disabled, a calm «🌙 завтра»).
 import { computed, ref } from 'vue'
@@ -30,9 +31,9 @@ const dashOffset = computed(() => {
 })
 
 const label = computed(() => {
-  if (cooling.value) return `Позвать в чат: подожди ${secondsLeft.value} с`
-  if (props.view.kind === 'exhausted') return 'Позвать в чат: сегодня всё, завтра снова'
-  return 'Позвать в чат'
+  if (cooling.value) return `Отправить статус онлайн: подожди ${secondsLeft.value} с`
+  if (props.view.kind === 'exhausted') return 'Отправить статус онлайн: сегодня всё, завтра снова'
+  return 'Отправить статус онлайн'
 })
 
 // A tap on the disabled button: a tiny shake, nothing else (no motion if asked for less).
@@ -66,7 +67,7 @@ function tap() {
     <div class="action-caption" aria-hidden="true">
       <span v-if="cooling" class="caption-muted" data-test="ping-seconds">{{ secondsLeft }} с</span>
       <span v-else-if="view.kind === 'exhausted'" class="caption-muted">завтра</span>
-      <span v-else>Позвать</span>
+      <span v-else>онлайн</span>
     </div>
   </div>
 </template>

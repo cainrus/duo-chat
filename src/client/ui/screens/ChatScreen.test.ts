@@ -56,41 +56,39 @@ describe('ChatScreen', () => {
     expect(session.state.error).toBeNull()
   })
 
-  it('«Позвать» is hidden while the friend is in the chat, and shown when she is away', async () => {
+  it('nothing on screen tells whether the friend is in the app', async () => {
     const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
-    expect(wrapper.find('[data-test="ping"]').exists()).toBe(false)
+    // The textarea's autosize height is layout noise, not information.
+    const snapshot = () => wrapper.html().replace(/(<textarea[^>]*?) style="[^"]*"/, '$1')
+    const here = snapshot()
+    expect(wrapper.find('[data-test="presence"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ping"]').exists()).toBe(true)
     session.dev.peerLeaves()
     await nextTick()
-    expect(wrapper.find('[data-test="ping"]').exists()).toBe(true)
+    expect(snapshot()).toBe(here)
   })
 
-  it('pressing ping shows what became of it, then the button waits with a countdown', async () => {
+  it('«онлайн» then waits with a countdown, the same whether or not she is here; no toast', async () => {
     const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false }, attachTo: document.body })
-    const toastText = () => [...document.querySelectorAll('.van-toast')].map((t) => t.textContent ?? '').join('|')
-    session.dev.peerLeaves()
+    const spy = vi.spyOn(session, 'ping')
+    const btn = () => wrapper.get('[data-test="ping"] button')
+    expect(btn().attributes('aria-label')).toBe('Отправить статус онлайн')
+    expect(wrapper.get('[data-test="ping"]').text()).toContain('онлайн')
+    await btn().trigger('click')
     await nextTick()
-    await wrapper.get('[data-test="ping"] button').trigger('click')
-    await vi.waitFor(() => expect(toastText()).toContain('Отправила 🔔'))
-    const btn = wrapper.get('[data-test="ping"] button')
-    expect(btn.attributes('aria-disabled')).toBe('true')
-    expect(btn.attributes('aria-label')).toMatch(/подожди (59|60) с/)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(btn().attributes('aria-disabled')).toBe('true')
+    expect(btn().attributes('aria-label')).toMatch(/подожди (59|60) с/)
     expect(wrapper.get('[data-test="ping-seconds"]').text()).toMatch(/^(59|60) с$/)
+    expect(document.querySelector('.van-toast')).toBeNull()
     // A tap while waiting does nothing.
-    const before = session.state.lastPing
-    await btn.trigger('click')
-    expect(session.state.lastPing).toBe(before)
-
-    session.dev.setPingView('ready')
-    session.dev.options.peerHasPush = false
-    await nextTick()
-    await wrapper.get('[data-test="ping"] button').trigger('click')
-    await vi.waitFor(() => expect(toastText()).toContain('Подожди, она скоро увидит ⏳'))
+    await btn().trigger('click')
+    expect(spy).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 
   it('no more pings today: a calm, disabled «🌙 завтра»', async () => {
     const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
-    session.dev.peerLeaves()
     session.dev.setPingView('exhausted')
     await nextTick()
     const ping = wrapper.get('[data-test="ping"]')
@@ -121,13 +119,9 @@ describe('ChatScreen', () => {
     expect(rows.some((r) => !r.classes('mine'))).toBe(true)
   })
 
-  it('shows presence and the missed-call card', async () => {
-    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: true } })
-    expect(wrapper.get('[data-test="presence"]').text()).toBe('здесь')
+  it('shows the missed-call card', () => {
+    const { wrapper } = mountWithDuo(ChatScreen, { props: { missedCall: true } })
     expect(wrapper.find('[data-test="missed-call"]').exists()).toBe(true)
-    session.dev.peerLeaves()
-    await nextTick()
-    expect(wrapper.get('[data-test="presence"]').text()).toBe('нет в чате')
   })
 
   it('emoji keyboard inserts emoji into the input', async () => {

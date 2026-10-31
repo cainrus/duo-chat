@@ -1,10 +1,8 @@
 // This device's pairing record, kept in IndexedDB only.
-// Uses nothing but the `indexedDB` global, so the service worker can read it too
-// (it needs the peer's name for notification text).
+// Uses nothing but the `indexedDB` global.
 // A separate database from the messages ('duo-chat'), so the two never fight over versions.
 
 import type { Side } from '@shared/types'
-import { AVATARS, type Profile } from '../session/types'
 
 export type DeviceConfig = {
   /** The pair secret, base64url. Never leaves the device except in the pairing link. */
@@ -12,9 +10,6 @@ export type DeviceConfig = {
   side: Side
   /** Proves this device to the server (the server keeps only its hash). */
   deviceToken: string
-  me: Profile
-  /** Learned from the friend over the data channel; null until first contact. */
-  peer: Profile | null
   /** The bell in the chat: this device asked for no pushes. Re-sent to the server on connect. */
   pushMuted?: boolean
 }
@@ -65,7 +60,15 @@ export function deviceConfigStore(dbName = DB_NAME): DeviceConfigStore {
     async load() {
       const db = await open()
       const value = await request(db.transaction(STORE, 'readonly').objectStore(STORE).get(KEY))
-      return isDeviceConfig(value) ? value : null
+      // Records saved before names and pictures were dropped carry `me`/`peer`: ignored.
+      return isDeviceConfig(value)
+        ? {
+            secret: value.secret,
+            side: value.side,
+            deviceToken: value.deviceToken,
+            ...(value.pushMuted !== undefined ? { pushMuted: value.pushMuted } : {}),
+          }
+        : null
     },
     async save(config) {
       const db = await open()
@@ -84,24 +87,12 @@ export function deviceConfigStore(dbName = DB_NAME): DeviceConfigStore {
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 
-export function isProfile(v: unknown): v is Profile {
-  return (
-    isObject(v) &&
-    typeof v.name === 'string' &&
-    v.name.trim().length > 0 &&
-    v.name.length <= 40 &&
-    (AVATARS as readonly unknown[]).includes(v.avatar)
-  )
-}
-
 function isDeviceConfig(v: unknown): v is DeviceConfig {
   return (
     isObject(v) &&
     typeof v.secret === 'string' &&
     (v.side === 'a' || v.side === 'b') &&
     typeof v.deviceToken === 'string' &&
-    isProfile(v.me) &&
-    (v.peer === null || isProfile(v.peer)) &&
     (v.pushMuted === undefined || typeof v.pushMuted === 'boolean')
   )
 }

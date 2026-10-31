@@ -120,8 +120,8 @@ describe('room: calls', () => {
     room.connect('a', T0)
     room.connect('b', T0)
     room.handle('a', { t: 'call' }, T0)
-    // Nothing is scheduled for the call itself (only b's presence and the like).
-    expect(room.nextAlarmAt(T0)).toBeNull()
+    // Nothing is scheduled for the call itself (only the invitation pause).
+    expect(room.nextAlarmAt(T0)).toBe(T0 + CALL_COOLDOWN_MS)
     const later = T0 + 2 * 60 * 60_000
     const fx = room.alarm(later)
     expect(sends(fx, 'a').some((m) => m.t === 'callEnded')).toBe(false)
@@ -207,63 +207,58 @@ describe('room: calls', () => {
   })
 })
 
-describe('room: ping', () => {
+describe('room: invitations («Я онлайн», messages, voice room)', () => {
   const SUB = { endpoint: 'https://push.test/b', keys: { p256dh: 'p', auth: 'a' } }
   const subscribe = (side: Side) => room.handle(side, { t: 'pushSubscribe', sub: SUB }, T0)
-  const results = (fx: Effect[], to: Side) => sends(fx, to).filter((m) => m.t === 'pingResult')
-
-  it('a ping while the friend is in the app is ignored: no nudge, no push, nothing counted', () => {
-    room.connect('a', T0)
-    room.connect('b', T0)
-    subscribe('b')
-    const fx = room.handle('a', { t: 'ping' }, T0)
-    expect(sends(fx, 'b').some((m) => (m as { t: string }).t === 'nudge')).toBe(false)
-    expect(pushes(fx, 'b')).toEqual([])
-    expect(results(fx, 'a')).toEqual([])
-    expect(room.state.sides.a.ping.pushesSent).toBe(0)
-  })
+  const types = (fx: Effect[], to: Side) => sends(fx, to).map((m) => m.t)
 
   it('pushes to an absent friend by the rules, with the cooldown and then the exhausted state', () => {
     room.connect('a', T0)
     subscribe('b')
     const first = room.handle('a', { t: 'ping' }, T0)
     expect(pushes(first, 'b')).toEqual([{ kind: 'ping' }])
-    expect(results(first, 'a')).toEqual([{ t: 'pingResult', result: 'pushed' }])
     expect(lastView(first, 'a')!.ping).toEqual({ kind: 'cooldown', until: T0 + CALL_COOLDOWN_MS })
-    const rationed = room.handle('a', { t: 'ping' }, T0 + 1)
-    expect(pushes(rationed, 'b')).toEqual([])
-    expect(results(rationed, 'a')).toEqual([{ t: 'pingResult', result: 'held' }])
+    expect(pushes(room.handle('a', { t: 'ping' }, T0 + 1), 'b')).toEqual([])
     const fx = room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS)
     expect(pushes(fx, 'b')).toEqual([{ kind: 'ping' }])
     expect(lastView(fx, 'a')!.ping.kind).toBe('exhausted')
   })
 
-  it('a friend without a push subscription is not pushed and the cap is not spent', () => {
-    room.connect('a', T0)
-    for (let i = 0; i < 3; i++) {
-      const fx = room.handle('a', { t: 'ping' }, T0 + i * CALL_COOLDOWN_MS)
-      expect(pushes(fx, 'b')).toEqual([])
-      expect(results(fx, 'a')).toEqual([{ t: 'pingResult', result: 'held' }])
-      // Nothing is spent, but the button pauses so a kid does not tap again and again.
-      expect(lastView(fx, 'a')!.ping).toEqual({ kind: 'cooldown', until: T0 + (i + 1) * CALL_COOLDOWN_MS })
+  it('the sender cannot tell whether the friend is here: same budget, same views, no result frame', () => {
+    const run = (friendHere: boolean, muted: boolean, subscribed: boolean) => {
+      const r = new RoomCore()
+      r.setPaired('a')
+      r.setPaired('b')
+      r.connect('a', T0)
+      if (subscribed) r.handle('b', { t: 'pushSubscribe', sub: SUB }, T0)
+      if (friendHere) r.connect('b', T0)
+      if (muted) r.handle('b', { t: 'pushMute', muted: true }, T0)
+      const fx = [...r.handle('a', { t: 'ping' }, T0 + 1), ...r.handle('a', { t: 'wrote' }, T0 + CALL_COOLDOWN_MS + 1)]
+      const toA = sends(fx, 'a').filter((m) => m.t !== 'view')
+      const views = sends(fx, 'a').flatMap((m) => (m.t === 'view' ? [{ ...m.view, peerPresent: null }] : []))
+      return { toA, views, pushed: pushes(fx, 'b').length, state: r.state.sides.a.ping }
     }
-    expect(room.state.sides.a.ping).toMatchObject({ pushesSent: 0, lastPushAt: null, exhaustedSince: null })
-    expect(room.view('a', T0 + 3 * CALL_COOLDOWN_MS).ping).toEqual({ kind: 'ready' })
-    // Once she subscribes, the first ping is pushed.
-    subscribe('b')
-    const fx = room.handle('a', { t: 'ping' }, T0 + 3 * CALL_COOLDOWN_MS)
-    expect(pushes(fx, 'b')).toEqual([{ kind: 'ping' }])
-    expect(results(fx, 'a')).toEqual([{ t: 'pingResult', result: 'pushed' }])
+    const away = run(false, false, true)
+    expect(away.pushed).toBe(2)
+    for (const other of [run(true, false, true), run(false, true, true), run(false, false, false)]) {
+      expect(other.pushed).toBe(0)
+      expect(other.toA).toEqual(away.toA)
+      expect(other.views).toEqual(away.views)
+      expect(other.state).toEqual(away.state)
+    }
+    expect(away.toA).toEqual([])
   })
 
-  it('a ping to a friend who has not paired is held', () => {
+  it('a ping to a friend who has not paired does nothing', () => {
     const solo = new RoomCore()
     solo.setPaired('a')
     solo.connect('a', T0)
-    expect(sends(solo.handle('a', { t: 'ping' }, T0), 'a')).toContainEqual({ t: 'pingResult', result: 'held' })
+    const fx = solo.handle('a', { t: 'ping' }, T0)
+    expect(types(fx, 'a')).toEqual(['view'])
+    expect(solo.state.sides.a.ping.pushesSent).toBe(0)
   })
 
-  it('a reply from the friend resets the ping counter', () => {
+  it('a reply from the friend resets the budget', () => {
     room.connect('a', T0)
     subscribe('b')
     room.handle('a', { t: 'ping' }, T0)
@@ -271,35 +266,24 @@ describe('room: ping', () => {
     expect(room.view('a', T0 + CALL_COOLDOWN_MS + 1).ping.kind).toBe('exhausted')
     room.connect('b', T0 + CALL_COOLDOWN_MS + 1)
     room.handle('b', { t: 'wrote' }, T0 + CALL_COOLDOWN_MS + 2)
-    room.disconnect('b', T0 + CALL_COOLDOWN_MS + 2)
-    expect(room.view('a', T0 + CALL_COOLDOWN_MS + 3 + PRESENCE_GRACE_MS).ping).toEqual({ kind: 'ready' })
+    expect(room.view('a', T0 + CALL_COOLDOWN_MS + 3).ping).toEqual({ kind: 'ready' })
   })
 
-  it('a message to an absent friend sends a content-free invitation; to a present one nothing', () => {
+  it('a message to an absent friend sends a content-free invitation', () => {
     room.connect('a', T0)
-    room.connect('b', T0)
     subscribe('b')
-    const here = room.handle('a', { t: 'wrote' }, T0)
-    expect(pushes(here, 'b')).toEqual([])
-    expect(sends(here, 'b')).not.toContainEqual({ t: 'nudge' })
-    expect(results(here, 'a')).toEqual([])
-
-    room.disconnect('b', T0 + 1)
-    const away = room.handle('a', { t: 'wrote' }, T0 + 2)
-    expect(pushes(away, 'b')).toEqual([{ kind: 'message' }])
-    expect(results(away, 'a')).toEqual([])
+    const fx = room.handle('a', { t: 'wrote' }, T0)
+    expect(pushes(fx, 'b')).toEqual([{ kind: 'message' }])
     // More messages inside the cooldown do not push again.
     expect(pushes(room.handle('a', { t: 'wrote' }, T0 + 3), 'b')).toEqual([])
   })
 
-  it('ping, message and voice room entry share one push budget', () => {
+  it('button, message and voice room entry share one budget', () => {
     room.connect('a', T0)
     subscribe('b')
     expect(pushes(room.handle('a', { t: 'wrote' }, T0), 'b')).toEqual([{ kind: 'message' }])
-    // The message used the push: the ping button is in cooldown and a ping does not push.
     expect(room.view('a', T0 + 1).ping).toEqual({ kind: 'cooldown', until: T0 + CALL_COOLDOWN_MS })
     expect(pushes(room.handle('a', { t: 'ping' }, T0 + 1), 'b')).toEqual([])
-    // After the cooldown the voice room entry takes the second (last) push of the round.
     const call = room.handle('a', { t: 'call' }, T0 + CALL_COOLDOWN_MS)
     expect(pushes(call, 'b')).toEqual([{ kind: 'call' }])
     expect(lastView(call, 'a')!.ping.kind).toBe('exhausted')
@@ -307,16 +291,21 @@ describe('room: ping', () => {
     expect(pushes(room.handle('a', { t: 'call' }, T0 + 3 * CALL_COOLDOWN_MS), 'b')).toEqual([])
   })
 
-  it('a muted device gets no pushes at all, and nothing is spent on it', () => {
+  it('a voice room entry while she is here spends the invitation; it is pushed if she leaves while it waits', () => {
+    room.connect('a', T0)
+    room.connect('b', T0)
+    subscribe('b')
+    expect(pushes(room.handle('a', { t: 'call' }, T0), 'b')).toEqual([])
+    expect(room.view('a', T0 + 1).ping).toEqual({ kind: 'cooldown', until: T0 + CALL_COOLDOWN_MS })
+    expect(pushes(room.disconnect('b', T0 + 5), 'b')).toEqual([{ kind: 'call' }])
+  })
+
+  it('a muted device gets no pushes at all', () => {
     room.connect('a', T0)
     subscribe('b')
     room.handle('b', { t: 'pushMute', muted: true }, T0)
     expect(room.state.sides.b.pushMuted).toBe(true)
     expect(pushes(room.handle('a', { t: 'ping' }, T0), 'b')).toEqual([])
-    expect(pushes(room.handle('a', { t: 'wrote' }, T0 + 1), 'b')).toEqual([])
-    expect(pushes(room.handle('a', { t: 'call' }, T0 + 1), 'b')).toEqual([])
-    expect(room.state.sides.a.ping.pushesSent).toBe(0)
-    room.handle('a', { t: 'callCancel' }, T0 + 1)
     room.handle('b', { t: 'pushMute', muted: false }, T0 + 1)
     expect(pushes(room.handle('a', { t: 'ping' }, T0 + CALL_COOLDOWN_MS), 'b')).toEqual([{ kind: 'ping' }])
   })

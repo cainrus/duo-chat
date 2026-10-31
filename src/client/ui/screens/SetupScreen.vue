@@ -1,15 +1,14 @@
 <script setup lang="ts">
 // One-time setup, done by an adult on each device:
 // install to the home screen (iPad: pairing must happen INSIDE the installed app, because its
-// storage is separate from Safari's) -> name + avatar -> create the pair (QR) or join it
-// (scan the QR in-app, or paste the link) -> notifications -> done.
-import { computed, defineAsyncComponent, reactive, ref } from 'vue'
+// storage is separate from Safari's) -> create the pair (QR) or join it (scan the QR in-app,
+// or paste the link) -> notifications -> done. No names or pictures: there are only two
+// people, "me" and "the friend" (owner, 2026-10-31).
+import { computed, defineAsyncComponent, ref } from 'vue'
 import { showToast } from 'vant'
-import { AVATARS, type AvatarId, type NotificationResult } from '../../session/types'
+import type { NotificationResult } from '../../session/types'
 import { useDuo } from '../useDuo'
-import { AVATAR_LOOK } from '../avatars'
 import { isAppleTouch, isStandalone, parsePairingLink } from '../pairing'
-import DuoAvatar from '../components/DuoAvatar.vue'
 import QrImage from '../components/QrImage.vue'
 import IconShare from '~icons/ph/export-fill'
 import IconAdd from '~icons/ph/plus-square-fill'
@@ -25,15 +24,12 @@ const QrScanner = defineAsyncComponent(() => import('../components/QrScanner.vue
 const emit = defineEmits<{ done: [] }>()
 const duo = useDuo()
 
-type Step = 'profile' | 'pair' | 'notify'
-const step = ref<Step>('profile')
-const stepIndex = computed(() => ({ profile: 0, pair: 1, notify: 2 })[step.value])
+type Step = 'pair' | 'notify'
+const step = ref<Step>('pair')
+const stepIndex = computed(() => ({ pair: 0, notify: 1 })[step.value])
 
 const standalone = isStandalone()
 const apple = isAppleTouch()
-
-const form = reactive({ name: '', avatar: null as AvatarId | null })
-const profileOk = computed(() => form.name.trim().length > 0 && form.avatar !== null)
 
 const role = ref<'create' | 'join'>('create')
 const adminSecret = ref('')
@@ -44,13 +40,11 @@ const link = ref<string | null>(null)
 const scanning = ref(false)
 const notify = ref<NotificationResult | null>(null)
 
-const me = () => ({ name: form.name.trim(), avatar: form.avatar! })
-
 async function create() {
   problem.value = null
   busy.value = true
   try {
-    link.value = (await duo.createPair({ adminSecret: adminSecret.value, me: me() })).link
+    link.value = (await duo.createPair({ adminSecret: adminSecret.value })).link
   } catch (e) {
     problem.value = e instanceof Error ? e.message : 'Не получилось'
   } finally {
@@ -67,7 +61,7 @@ async function join(text: string) {
   }
   busy.value = true
   try {
-    await duo.joinPair({ secret, me: me() })
+    await duo.joinPair({ secret })
     step.value = 'notify'
   } catch (e) {
     problem.value = e instanceof Error ? e.message : 'Не получилось'
@@ -133,29 +127,12 @@ const notifyLabel = computed(
     </van-cell-group>
 
     <van-steps :active="stepIndex" active-color="var(--van-primary-color)" class="steps">
-      <van-step>Кто это</van-step>
       <van-step>Пара</van-step>
       <van-step>Уведомления</van-step>
     </van-steps>
 
-    <!-- 1. Name + avatar -->
-    <van-cell-group v-if="step === 'profile'" inset class="card">
-      <van-field v-model="form.name" label="Имя" placeholder="Как зовут ребёнка" maxlength="20" :border="false" size="large" data-test="name" />
-      <div class="avatar-label">Картинка</div>
-      <van-grid :column-num="4" :border="false" clickable class="avatar-grid">
-        <van-grid-item v-for="a in AVATARS" :key="a" :class="{ picked: form.avatar === a }" :data-test="`avatar-${a}`" @click="form.avatar = a">
-          <van-badge :content="form.avatar === a ? '✓' : undefined" color="var(--van-primary-color)" :offset="[-4, 4]">
-            <DuoAvatar :avatar="a" :size="72" :aria-label="AVATAR_LOOK[a].label" />
-          </van-badge>
-        </van-grid-item>
-      </van-grid>
-      <div class="card-actions">
-        <van-button round block type="primary" size="large" :disabled="!profileOk" data-test="next" @click="step = 'pair'">Дальше</van-button>
-      </div>
-    </van-cell-group>
-
-    <!-- 2. Pairing -->
-    <van-cell-group v-else-if="step === 'pair'" inset class="card">
+    <!-- 1. Pairing -->
+    <van-cell-group v-if="step === 'pair'" inset class="card">
       <van-tabs v-model:active="role" :before-change="() => !link" class="role-tabs">
         <van-tab name="create" title="Создать" />
         <van-tab name="join" title="Подключиться" />
@@ -201,7 +178,7 @@ const notifyLabel = computed(
       <p v-if="problem" class="problem" data-test="problem">{{ problem }}</p>
     </van-cell-group>
 
-    <!-- 3. Notifications (iOS: must be a tap inside the installed app) -->
+    <!-- 2. Notifications (iOS: must be a tap inside the installed app) -->
     <van-cell-group v-else inset class="card">
       <p class="hint">Чтобы подружка могла позвать, когда приложение закрыто.</p>
       <div class="card-actions">
@@ -293,18 +270,6 @@ const notifyLabel = computed(
   margin: 4px 16px 8px;
   font-size: var(--van-font-size-sm);
   color: var(--van-text-color-2);
-}
-.avatar-label {
-  padding: 8px 16px 0;
-  color: var(--van-text-color-2);
-  font-size: var(--van-font-size-md);
-}
-.avatar-grid :deep(.van-grid-item__content) {
-  background: transparent;
-}
-.picked :deep(.duo-avatar) {
-  outline: 4px solid var(--van-primary-color);
-  outline-offset: 3px;
 }
 .card-actions {
   padding: 12px 16px;

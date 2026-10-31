@@ -71,32 +71,17 @@ describe('fake session', () => {
     expect(s.state).toMatchObject({ myMode: 'off', peerMode: 'off' })
   })
 
-  it('ping: a push, a pause, the second push, then nothing until tomorrow; a reply resets', () => {
+  it('«онлайн»: a pause, the second, then nothing until tomorrow; the same whether or not she is here; a reply resets', () => {
     const s = make()
-    s.dev.peerLeaves()
     s.ping()
-    expect(s.state.lastPing?.result).toBe('pushed')
     expect(s.state.view!.ping).toEqual({ kind: 'cooldown', until: Date.now() + CALL_COOLDOWN_MS })
-    const before = s.state.lastPing
-    s.ping() // paused: ignored
-    expect(s.state.lastPing).toBe(before)
     vi.advanceTimersByTime(CALL_COOLDOWN_MS)
     expect(s.state.view!.ping.kind).toBe('ready')
+    s.dev.peerLeaves()
     s.ping()
     expect(s.state.view!.ping.kind).toBe('exhausted')
     s.dev.peerSays('🙂')
     expect(s.state.view!.ping.kind).toBe('ready')
-  })
-
-  it('ping: ignored while she is here; held (and paused) when she has no notifications', () => {
-    const s = make()
-    s.ping()
-    expect(s.state.lastPing).toBeNull()
-    s.dev.peerLeaves()
-    s.dev.options.peerHasPush = false
-    s.ping()
-    expect(s.state.lastPing?.result).toBe('held')
-    expect(s.state.view!.ping.kind).toBe('cooldown')
   })
 
   it('the bell mutes and unmutes', async () => {

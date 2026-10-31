@@ -43,7 +43,7 @@ describe('call switch in the chat', () => {
     expect(session.state.myMode).toBe('audio')
     expect(session.state.view!.outgoing).toBe(true)
     expect(seg('audio').attributes('aria-checked')).toBe('true')
-    expect(status()).toContain('ждём Соня…')
+    expect(status()).toContain('ждём…')
     expect(disabled('video')).toBe(true)
     expect(wrapper.find('[data-test="video-lock"]').exists()).toBe(true)
 
@@ -64,7 +64,7 @@ describe('call switch in the chat', () => {
     await nextTick()
     expect(seg('audio').classes()).toContain('seg--calling')
     expect(seg('audio').attributes('aria-label')).toBe('Подключиться')
-    expect(status()).toContain('Соня зовёт')
+    expect(status()).toContain('Тебя зовут')
     expect(ring.starts).toBe(before.starts + 1)
     // No full-screen popup and no decline button.
     expect(wrapper.find('[data-test="incoming"]').exists()).toBe(false)

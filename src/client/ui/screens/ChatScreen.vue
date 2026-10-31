@@ -1,13 +1,10 @@
 <script setup lang="ts">
-// The only screen after setup: the friend, the call bar (call switch + ping), the video while
+// The only screen after setup: is the friend here, the call bar (call switch + ping), the video while
 // both switches are on VIDEO, the conversation and the input with a big emoji keyboard.
 // Calls happen right here; the chat stays usable during them.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { showToast } from 'vant'
-import type { PingResult } from '@shared/protocol'
 import { MAX_MESSAGE_LENGTH } from '../../messages/store'
 import { useDuo } from '../useDuo'
-import DuoAvatar from '../components/DuoAvatar.vue'
 import ChatBubble from '../components/ChatBubble.vue'
 import EmojiKeyboard from '../components/EmojiKeyboard.vue'
 import CallBar from '../components/CallBar.vue'
@@ -31,9 +28,7 @@ const emojiOpen = ref(false)
 const list = ref<HTMLElement | null>(null)
 
 const view = computed(() => s.view)
-const present = computed(() => !!view.value?.peerPresent)
 const pending = computed(() => new Set(s.pendingIds))
-const peerName = computed(() => s.peer?.name ?? (view.value?.peerPaired ? 'Подружка' : 'Ждём подружку'))
 
 function send() {
   const t = text.value.trim()
@@ -63,18 +58,6 @@ function scrollToEnd() {
 onMounted(scrollToEnd)
 watch([() => s.messages.length, emojiOpen, () => s.media.videoOn], scrollToEnd)
 
-// What became of our ping: a short toast, so pressing it is never silent.
-const PING_NOTES: Record<PingResult, string> = {
-  pushed: 'Отправила 🔔',
-  held: 'Подожди, она скоро увидит ⏳',
-}
-watch(
-  () => s.lastPing,
-  (p) => {
-    if (p) showToast({ message: PING_NOTES[p.result], position: 'middle', duration: 1600 })
-  },
-)
-
 // The bell: pushes to this device on or off. Turning them on may ask for permission first.
 const bellOn = computed(() => s.notificationsAllowed && !s.pushMuted)
 function toggleBell() {
@@ -85,14 +68,9 @@ function toggleBell() {
 <template>
   <div class="chat van-safe-area-top">
     <header class="chat-head">
-      <van-badge dot :color="present ? 'var(--van-success-color)' : 'var(--van-text-color-3)'" :offset="[-6, 50]">
-        <DuoAvatar :avatar="s.peer?.avatar" :size="56" data-test="peer-avatar" />
-      </van-badge>
-      <div class="head-text">
-        <div class="head-name">{{ peerName }}</div>
-        <div class="head-status" :data-present="present" data-test="presence">
-          {{ present ? 'здесь' : view?.peerPaired ? 'нет в чате' : 'ещё не подключилась' }}
-        </div>
+      <!-- No names, pictures or presence (owner): nothing tells whether the friend is in the app. -->
+      <div class="head-title">
+        <span v-if="view && !view.peerPaired" class="head-wait" data-test="not-paired">ещё не подключилась</span>
       </div>
       <IconOffline v-if="s.connection !== 'online'" class="head-offline" aria-label="Нет связи" />
       <button
@@ -107,7 +85,6 @@ function toggleBell() {
         <IconBell v-if="bellOn" class="bell-icon" />
         <IconBellOff v-else class="bell-icon" />
       </button>
-      <DuoAvatar :avatar="s.me?.avatar" :size="40" class="head-me" />
     </header>
 
     <CallBar v-if="view" @ping="duo.ping()" />
@@ -137,7 +114,7 @@ function toggleBell() {
     <footer class="chat-foot van-safe-area-bottom">
       <div v-if="missedCall" class="missed" data-test="missed-call">
         <IconPhoneMissed class="missed-icon" />
-        <span class="missed-text">Звонила {{ s.peer?.name ?? 'подружка' }}</span>
+        <span class="missed-text">Звала поговорить</span>
         <van-button round type="success" class="missed-btn" :disabled="view?.call.kind !== 'ready'" @click="emit('callBack')">Перезвонить</van-button>
         <van-button round class="missed-close" aria-label="Закрыть" @click="emit('dismissMissed')">
           <IconX class="missed-x" />
@@ -184,21 +161,13 @@ function toggleBell() {
   gap: 14px;
   padding: 12px 16px;
 }
-.head-text {
+.head-title {
   flex: 1;
   min-width: 0;
 }
-.head-name {
-  font-size: var(--van-font-size-lg);
-  font-weight: 700;
-  color: var(--van-text-color);
-}
-.head-status {
-  font-size: var(--van-font-size-sm);
-  color: var(--van-text-color-3);
-}
-.head-status[data-present='true'] {
-  color: var(--van-success-color);
+.head-wait {
+  font-size: var(--van-font-size-md);
+  color: var(--van-text-color-2);
 }
 .head-offline {
   width: 28px;
@@ -223,9 +192,6 @@ function toggleBell() {
 .bell-icon {
   width: 26px;
   height: 26px;
-}
-.head-me {
-  opacity: 0.9;
 }
 .chat-list {
   flex: 1;

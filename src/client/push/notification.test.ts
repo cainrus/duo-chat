@@ -3,11 +3,11 @@ import { INVITE_TTL_MS } from '@shared/constants'
 import { callPushUrl, expiredNotifications, notificationFor, parseCallPushUrl, parsePushPayload } from './notification'
 
 describe('push notification', () => {
-  it('every invitation looks the same: «Дуо», «<имя> зовёт тебя 👋», one tag that replaces the old', () => {
-    const specs = (['ping', 'message', 'call'] as const).map((kind) => notificationFor({ kind }, 'Соня', 123))
+  it('every invitation looks the same: «Дуо», «онлайн» (no names, nothing to act on), one tag that replaces the old', () => {
+    const specs = (['ping', 'message', 'call'] as const).map((kind) => notificationFor({ kind }, 123))
     for (const spec of specs) {
       expect(spec.title).toBe('Дуо')
-      expect(spec.options.body).toBe('Соня зовёт тебя 👋')
+      expect(spec.options.body).toBe('онлайн')
       expect(spec.options).toMatchObject({ tag: 'duo', renotify: true, timestamp: 123 })
     }
     // The kind is only in data, and only decides where a click leads.
@@ -15,18 +15,17 @@ describe('push notification', () => {
   })
 
   it('ping and message expire after INVITE_TTL_MS and open the chat; a call has no expiry and opens the missed-call check', () => {
-    expect(notificationFor({ kind: 'ping' }, 'Соня', 123).options.data).toEqual({ url: '/', kind: 'ping', expiresAt: 123 + INVITE_TTL_MS })
-    expect(notificationFor({ kind: 'message' }, 'Соня', 123).options.data.expiresAt).toBe(123 + INVITE_TTL_MS)
-    expect(notificationFor({ kind: 'call' }, 'Соня', 123).options.data).toEqual({
+    expect(notificationFor({ kind: 'ping' }, 123).options.data).toEqual({ url: '/', kind: 'ping', expiresAt: 123 + INVITE_TTL_MS })
+    expect(notificationFor({ kind: 'message' }, 123).options.data.expiresAt).toBe(123 + INVITE_TTL_MS)
+    expect(notificationFor({ kind: 'call' }, 123).options.data).toEqual({
       url: '/?from=call-push&at=123',
       kind: 'call',
       expiresAt: null,
     })
   })
 
-  it('falls back to "Подружка", and shows the invitation even without a readable payload', () => {
-    expect(notificationFor({ kind: 'call' }, null, 1).options.body).toBe('Подружка зовёт тебя 👋')
-    const blind = notificationFor(null, ' ', 1)
+  it('shows the invitation even without a readable payload', () => {
+    const blind = notificationFor(null, 1)
     expect(blind.title).toBe('Дуо')
     expect(blind.options.data.url).toBe('/')
   })

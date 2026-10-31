@@ -194,11 +194,6 @@ function parseServerFrame(data: unknown): ServerToClient | null {
   }
   if (typeof value !== 'object' || value === null) return null
   const t = (value as { t?: unknown }).t
-  if (t === 'pingResult') {
-    const result = (value as { result?: unknown }).result
-    if (result !== 'pushed' && result !== 'held') return null
-    return { t, result }
-  }
   if (t !== 'view' && t !== 'signal' && t !== 'callEnded' && t !== 'error') return null
   return value as ServerToClient
 }

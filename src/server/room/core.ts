@@ -18,7 +18,6 @@ import {
 import {
   decideInvite,
   initialPingPushes,
-  onPingHeld,
   onPingReply,
   pingButtonView,
   pingChangesAt,
@@ -43,10 +42,12 @@ export type RoomState = {
   /**
    * `from` waits for the other side in the call ("voice room" model): no ring timeout; it ends
    * when `from` cancels, hides the app or disconnects, or the other side joins.
-   * `pushed`: the callee already got the push for this call (at most one per call).
-   * Optional so that state persisted before the field existed still loads.
+   * `invited`: the entry got an invitation from the caller's budget (decided at entry, whether
+   * or not the callee is here); it becomes one push the moment the callee is unreachable.
+   * `pushed`: that push went out. Both optional so that older saved state still loads
+   * (a missing `invited` counts as granted).
    */
-  pendingCall: { from: Side; pushed?: boolean } | null
+  pendingCall: { from: Side; invited?: boolean; pushed?: boolean } | null
   /** A call is connected. (State saved before calls became voice-only holds `{ kind }`: still truthy.) */
   activeCall: boolean
 }
@@ -164,9 +165,9 @@ export class RoomCore {
           break
         }
         me.call = onCallPlaced(me.call, now)
-        this.#s.pendingCall = { from: side, pushed: false }
         them.call = onCalledBack(them.call, now)
         them.ping = onPingReply()
+        this.#s.pendingCall = { from: side, invited: this.#spendInvite(side, now), pushed: false }
         fx.push(...this.#pushRinging(now))
         break
       }
@@ -186,25 +187,14 @@ export class RoomCore {
         else if (pending?.from === side) fx.push(...this.#endPending(now))
         break
 
-      case 'ping': {
-        if (!them.paired) {
-          fx.push(...this.#send(side, { t: 'pingResult', result: 'held' }))
-          break
-        }
-        // She is in the app (the button is hidden then): ignored, nothing is counted.
-        if (this.#reachable(peer, now)) break
-        them.ping = onPingReply()
-        const pushed = this.#invite(side, 'ping', now, fx)
-        // She cannot get pushes: nothing is spent, but the button pauses like after a push.
-        if (!pushed && (!them.pushSub || them.pushMuted)) me.ping = onPingHeld(me.ping, now)
-        fx.push(...this.#send(side, { t: 'pingResult', result: pushed ? 'pushed' : 'held' }))
-        break
-      }
-
+      // «Я онлайн» and a written message: an invitation from the shared budget. Spent the same
+      // way whether or not she is here; only an absent friend gets the push. No result is sent
+      // back: the button's own state is the feedback, and it must not reveal her presence.
+      case 'ping':
       case 'wrote':
+        if (!them.paired) break
         them.ping = onPingReply()
-        // A message to an absent friend invites her; to a present one nothing.
-        if (them.paired && !this.#reachable(peer, now)) this.#invite(side, 'message', now, fx)
+        if (this.#spendInvite(side, now)) fx.push(...this.#deliver(peer, msg.t === 'ping' ? 'ping' : 'message', now))
         break
     }
     fx.push(...this.#pushRinging(now))
@@ -261,27 +251,25 @@ export class RoomCore {
    */
   #pushRinging(now: number): Effect[] {
     const pending = this.#s.pendingCall
-    if (!pending || pending.pushed) return []
+    if (!pending || pending.pushed || pending.invited === false) return []
     const callee = otherSide(pending.from)
     if (this.#reachable(callee, now)) return []
     pending.pushed = true
-    const fx: Effect[] = []
-    this.#invite(pending.from, 'call', now, fx)
-    return fx
+    return this.#deliver(callee, 'call', now)
   }
 
-  /**
-   * One push budget per sender for every invitation (ping, message, voice room entry). A friend
-   * who cannot be pushed (no subscription, or she muted pushes) costs nothing. True if pushed.
-   */
-  #invite(from: Side, kind: PushPayload['kind'], now: number, fx: Effect[]): boolean {
-    const to = otherSide(from)
-    const target = this.#s.sides[to]
-    if (!target.pushSub || target.pushMuted) return false
+  /** Spends one invitation from `from`'s shared budget (button, message, voice room). */
+  #spendInvite(from: Side, now: number): boolean {
     const r = decideInvite(this.#s.sides[from].ping, now)
     this.#s.sides[from].ping = r.state
-    if (r.push) fx.push({ type: 'push', to, payload: { kind } })
     return r.push
+  }
+
+  /** A granted invitation reaches `to` only while she is away and can get pushes. */
+  #deliver(to: Side, kind: PushPayload['kind'], now: number): Effect[] {
+    const target = this.#s.sides[to]
+    if (this.#reachable(to, now) || !target.pushSub || target.pushMuted) return []
+    return [{ type: 'push', to, payload: { kind } }]
   }
 
   #updatePresence(side: Side, now: number): void {

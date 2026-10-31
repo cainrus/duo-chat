@@ -1,8 +1,8 @@
 // Notification text for a Web Push. Pure, so it is tested without a service worker.
-// The server sends only { kind } (see PushPayload); the friend's name is added here from
-// the device config, so it never travels through the server or the push service.
+// The server sends only { kind } (see PushPayload). There are no names at all (owner,
+// 2026-10-31: only two people), so the text is fixed.
 //
-// Every invitation looks the same (owner, 2026-10-31): title «Дуо», body «<имя> зовёт тебя 👋»,
+// Every invitation looks the same (owner, 2026-10-31): title «Дуо», body «онлайн»,
 // whatever triggered it (ping, a message, the voice room). The kind stays only in `data`, to
 // decide where a click leads. One tag for all, so a new one replaces the old: at most one duo
 // notification on screen. Browsers cannot dismiss a shown notification on a timer, so expiry
@@ -11,8 +11,8 @@
 import { INVITE_TTL_MS } from '@shared/constants'
 import type { PushPayload } from '@shared/protocol'
 
-export const FALLBACK_PEER_NAME = 'Подружка'
 export const NOTIFICATION_TITLE = 'Дуо'
+export const NOTIFICATION_BODY = 'онлайн'
 /** The one tag every duo notification uses. */
 export const NOTIFICATION_TAG = 'duo'
 
@@ -62,18 +62,13 @@ export function parsePushPayload(text: string | null): PushPayload | null {
  * The one invitation notification. A push without a readable payload still shows it: iOS
  * revokes push for a site whose push events show nothing.
  */
-export function notificationFor(
-  payload: PushPayload | null,
-  peerName: string | null | undefined,
-  receivedAt: number,
-): NotificationSpec {
-  const name = peerName?.trim() || FALLBACK_PEER_NAME
+export function notificationFor(payload: PushPayload | null, receivedAt: number): NotificationSpec {
   const kind = payload?.kind ?? null
   const call = kind === 'call'
   return {
     title: NOTIFICATION_TITLE,
     options: {
-      body: `${name} зовёт тебя 👋`,
+      body: NOTIFICATION_BODY,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
       lang: 'ru',

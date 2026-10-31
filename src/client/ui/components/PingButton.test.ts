@@ -7,7 +7,7 @@ import PingButton from './PingButton.vue'
 describe('PingButton', () => {
   it('ready: shows the label and emits press', async () => {
     const w = mount(PingButton, { props: { view: { kind: 'ready' } } })
-    expect(w.text()).toContain('Позвать')
+    expect(w.text()).toContain('онлайн')
     expect(w.get('button').attributes('aria-disabled')).toBe('false')
     await w.get('button').trigger('click')
     expect(w.emitted('press')).toHaveLength(1)

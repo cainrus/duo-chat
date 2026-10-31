@@ -8,7 +8,7 @@ import type { MessagePersistence, StoredMessage } from '../messages/store'
 import type { LinkStatus, ServerLink } from '../net/serverLink'
 import type { DataFrame } from '../rtc/peerLink'
 import { ACK_RESEND_MS, createLiveSession, DIRECT_RETRY_MS, ERROR_TTL_MS, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
-import type { NotificationResult, Profile } from './types'
+import type { NotificationResult } from './types'
 
 // ---------- fakes ----------
 
@@ -164,8 +164,6 @@ const memoryMessages = (initial: StoredMessage[] = []): MessagePersistence & { s
   return p
 }
 
-const ME: Profile = { name: 'Маша', avatar: 'bunny' }
-const FRIEND: Profile = { name: 'Соня', avatar: 'fox' }
 const T0 = 1_800_000_000_000
 
 const view = (over: Partial<RoomView> = {}): RoomView => ({
@@ -206,7 +204,7 @@ type Harness = {
 async function paired(side: Side = 'a') {
   const secret = generatePairSecret()
   const { encodeSecret } = await import('../crypto/pair')
-  const config: DeviceConfig = { secret: encodeSecret(secret), side, deviceToken: 'tok-' + side, me: ME, peer: null }
+  const config: DeviceConfig = { secret: encodeSecret(secret), side, deviceToken: 'tok-' + side }
   return { secret, config }
 }
 
@@ -359,7 +357,7 @@ describe('live session: pairing', () => {
 
   it('createPair claims slot a with the admin secret, saves the config and returns the link', async () => {
     h = harness()
-    const { link } = await h.session.createPair({ adminSecret: 'adm1n', me: ME })
+    const { link } = await h.session.createPair({ adminSecret: 'adm1n' })
     const claim = h.fetchCalls.find((c) => c.url.endsWith('/claim'))!
     expect(claim.init?.method).toBe('POST')
     expect(JSON.parse(String(claim.init?.body))).toEqual({ side: 'a' })
@@ -372,10 +370,9 @@ describe('live session: pairing', () => {
     // The secret never goes to the server.
     expect(claim.url + String(claim.init?.body)).not.toContain(link.split('#pair=')[1])
 
-    expect(h.config.value()).toMatchObject({ side: 'a', deviceToken: 'token-a', me: ME, peer: null })
+    expect(h.config.value()).toEqual({ secret: expect.any(String), side: 'a', deviceToken: 'token-a' })
     expect(h.session.state.phase).toBe('ready')
     expect(h.session.state.self).toBe('a')
-    expect(h.session.state.me).toEqual(ME)
     expect(h.link().opts).toEqual({ wsBase: 'wss://duo.test', roomId, deviceToken: 'token-a' })
     expect(h.link().visible).toEqual([true])
   })
@@ -383,7 +380,7 @@ describe('live session: pairing', () => {
   it('joinPair claims slot b without auth', async () => {
     h = harness()
     const secret = generatePairSecret()
-    await h.session.joinPair({ secret, me: ME })
+    await h.session.joinPair({ secret })
     const claim = h.fetchCalls.find((c) => c.url.endsWith('/claim'))!
     expect(JSON.parse(String(claim.init?.body))).toEqual({ side: 'b' })
     expect((claim.init?.headers as Record<string, string>).Authorization).toBeUndefined()
@@ -393,16 +390,16 @@ describe('live session: pairing', () => {
 
   it('pairing errors are thrown in Russian and leave the device in setup', async () => {
     h = harness({ fetch: () => new Response('full', { status: 409 }) })
-    await expect(h.session.joinPair({ secret: generatePairSecret(), me: ME })).rejects.toThrow(/уже использована/)
+    await expect(h.session.joinPair({ secret: generatePairSecret() })).rejects.toThrow(/уже использована/)
     expect(h.session.state.phase).toBe('setup')
     expect(h.config.value()).toBeNull()
   })
 
   it('a stored pairing starts the session on load', async () => {
     const { config } = await paired('b')
-    h = harness({ config: { ...config, peer: FRIEND } })
+    h = harness({ config })
     await h.session.ready
-    expect(h.session.state).toMatchObject({ phase: 'ready', self: 'b', me: ME, peer: FRIEND })
+    expect(h.session.state).toMatchObject({ phase: 'ready', self: 'b' })
     expect(h.link().opts.deviceToken).toBe('tok-b')
   })
 
@@ -446,15 +443,11 @@ describe('live session: server link', () => {
     expect(h.link().visible).toEqual([true, false, true])
   })
 
-  it('ping sends a ping frame; its result goes to state', async () => {
+  it('«онлайн» sends a ping frame; nothing comes back', async () => {
     h = harness({ config })
     await h.session.ready
     h.session.ping()
-    expect(h.link().sentOf('ping')).toHaveLength(1)
-    expect(h.session.state.lastPing).toBeNull()
-    h.clock.now = T0 + 50
-    h.link().deliver({ t: 'pingResult', result: 'held' })
-    expect(h.session.state.lastPing).toEqual({ result: 'held', at: T0 + 50 })
+    expect(h.link().sentOf('ping')).toEqual([{ t: 'ping' }])
   })
 
   it('connects the direct link while the friend is present and closes it when she is gone', async () => {
@@ -596,7 +589,7 @@ describe('live session: server link', () => {
     h = harness()
     await h.session.ready
     expect(await h.session.enableNotifications()).toBe('granted')
-    await h.session.joinPair({ secret: generatePairSecret(), me: ME })
+    await h.session.joinPair({ secret: generatePairSecret() })
     expect(h.link().sentOf('pushSubscribe')).toEqual([{ t: 'pushSubscribe', sub: h.push.subs[0] }])
   })
 })
@@ -620,8 +613,7 @@ describe('live session: messages', () => {
     expect(h.session.state.pendingIds).toEqual(h.session.state.messages.map((m) => m.id))
 
     h.peer().setOpen(true)
-    expect(h.peer().out[0]).toEqual({ t: 'profile', p: ME })
-    expect(h.peer().out.slice(1).map((f) => f.t === 'msg' && f.m.text)).toEqual(['привет', '🦄'])
+    expect(h.peer().out.map((f) => f.t === 'msg' && f.m.text)).toEqual(['привет', '🦄'])
     // Handed to the channel is not delivered: still pending until the friend acks.
     expect(h.session.state.pendingIds).toEqual(h.session.state.messages.map((m) => m.id))
     h.peer().receive({ t: 'ack', ids: h.session.state.messages.map((m) => m.id) })
@@ -638,7 +630,7 @@ describe('live session: messages', () => {
     h.session.sendText('one')
     h.clock.now++
     h.session.sendText('two')
-    h.peer().capacity = 2 // profile + one message
+    h.peer().capacity = 1 // one message
     h.peer().setOpen(true)
     expect(h.peer().out.filter((f) => f.t === 'msg')).toHaveLength(1)
     h.peer().receive({ t: 'ack', ids: [h.session.state.messages[0]!.id] })
@@ -649,7 +641,7 @@ describe('live session: messages', () => {
     expect(h.peer().out.filter((f) => f.t === 'msg').map((f) => f.t === 'msg' && f.m.text)).toEqual(['one', 'two'])
   })
 
-  it('sends at once when the channel is open, and always tells the server "replied"', async () => {
+  it('sends at once when the channel is open, and always tells the server "wrote"', async () => {
     h = harness({ config })
     await h.session.ready
     h.peer().setOpen(true)
@@ -738,50 +730,14 @@ describe('live session: messages', () => {
     expect(h.session.state.error).toBeNull()
   })
 
-  it('receives messages and the friend profile (saved to the device config)', async () => {
+  it('receives messages from the friend only; nothing else crosses the channel about who they are', async () => {
     h = harness({ config })
     await h.session.ready
+    h.peer().setOpen(true)
     h.peer().receive({ t: 'msg', m: { id: 'm1', from: 'b', text: 'йо', sentAt: T0 - 1000 } })
     h.peer().receive({ t: 'msg', m: { id: 'm2', from: 'a', text: 'spoof', sentAt: T0 } })
     expect(h.session.state.messages.map((m) => m.text)).toEqual(['йо'])
-    h.peer().receive({ t: 'profile', p: FRIEND })
-    expect(h.session.state.peer).toEqual(FRIEND)
-    await flush()
-    expect(h.config.value()?.peer).toEqual(FRIEND)
-    h.peer().receive({ t: 'profile', p: { name: 'x', avatar: 'dragon' } as unknown as Profile })
-    expect(h.session.state.peer).toEqual(FRIEND)
-  })
-
-  it("answers the friend's first profile on a channel with ours, once per open", async () => {
-    h = harness({ config })
-    await h.session.ready
-    const profiles = () => h!.peer().out.filter((f) => f.t === 'profile')
-    h.peer().setOpen(true)
-    expect(profiles()).toEqual([{ t: 'profile', p: ME }])
-    h.peer().receive({ t: 'profile', p: FRIEND })
-    expect(profiles()).toHaveLength(2)
-    h.peer().receive({ t: 'profile', p: FRIEND })
-    expect(profiles()).toHaveLength(2)
-    // A new channel: open sends it, and the first profile from her is answered again.
-    h.peer().setOpen(false)
-    h.peer().setOpen(true)
-    expect(profiles()).toHaveLength(3)
-    h.peer().receive({ t: 'profile', p: FRIEND })
-    expect(profiles()).toHaveLength(4)
-    expect(profiles().every((f) => f.t === 'profile' && f.p.name === ME.name)).toBe(true)
-  })
-
-  it('sends the profile again when it changes while the channel is open', async () => {
-    h = harness({ config })
-    await h.session.ready
-    const profiles = () => h!.peer().out.filter((f) => f.t === 'profile')
-    h.session.state.me = { name: 'Маша', avatar: 'cat' }
-    expect(profiles()).toEqual([])
-    h.peer().setOpen(true)
-    expect(profiles()).toEqual([{ t: 'profile', p: { name: 'Маша', avatar: 'cat' } }])
-    h.session.state.me = { name: 'Мария', avatar: 'cat' }
-    expect(profiles().at(-1)).toEqual({ t: 'profile', p: { name: 'Мария', avatar: 'cat' } })
-    expect(profiles()).toHaveLength(2)
+    expect(h.peer().out.every((f) => f.t === 'ack')).toBe(true)
   })
 
   it('removes a message when its hour is over', async () => {

@@ -6,7 +6,7 @@
 import type { Side } from '@shared/types'
 import { otherSide } from '@shared/types'
 import type { ChatMessage } from '../messages/store'
-import { CALL_MODES, type CallMode, type Profile } from '../session/types'
+import { CALL_MODES, type CallMode } from '../session/types'
 import type { ServerLink } from '../net/serverLink'
 import { open, seal } from '../crypto/pair'
 
@@ -16,7 +16,6 @@ import { open, seal } from '../crypto/pair'
  */
 export type DataFrame =
   | { t: 'msg'; m: ChatMessage }
-  | { t: 'profile'; p: Profile }
   | { t: 'ack'; ids: string[] }
   | { t: 'mode'; mode: CallMode }
 
@@ -557,7 +556,6 @@ function parseFrame(data: unknown): DataFrame | null {
   if (!isObject(value)) return null
   // Shape only; the message store and the session validate the content.
   if (value.t === 'msg' && isObject(value.m)) return value as DataFrame
-  if (value.t === 'profile' && isObject(value.p)) return value as DataFrame
   if (value.t === 'ack' && Array.isArray(value.ids) && value.ids.every((id) => typeof id === 'string')) {
     return { t: 'ack', ids: value.ids as string[] }
   }

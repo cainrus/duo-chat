@@ -2,9 +2,8 @@
 // replaces `self.__WB_MANIFEST` below with the list of built files. It exports nothing.
 //
 // What it does:
-// - push: shows the one invitation, «Дуо: <friend> зовёт тебя 👋», whatever triggered it
-//   (ping, a message, the voice room). The friend's name comes from the device config in
-//   IndexedDB, never from the push itself. One tag for all, so the new one replaces the old;
+// - push: shows the one invitation, «Дуо: онлайн», whatever triggered it (ping, a
+//   message, the voice room). No names anywhere. One tag for all, so the new one replaces the old;
 //   expired ones still on screen are closed first (browsers cannot close them on a timer).
 // - notificationclick: focuses an open window of the app, or opens one. A call notification
 //   opens `/?from=call-push&at=..` (or posts the same URL to an open window as
@@ -14,7 +13,6 @@
 
 /// <reference lib="webworker" />
 
-import { deviceConfigStore } from '../device/config'
 import { expiredNotifications, NOTIFICATION_TAG, notificationFor, parsePushPayload } from './notification'
 
 type PrecacheEntry = { url: string; revision: string | null } | string
@@ -82,14 +80,6 @@ self.addEventListener('fetch', (event) => {
   )
 })
 
-async function peerName(): Promise<string | null> {
-  try {
-    return (await deviceConfigStore().load())?.peer?.name ?? null
-  } catch {
-    return null
-  }
-}
-
 self.addEventListener('push', (event) => {
   event.waitUntil(
     (async () => {
@@ -102,7 +92,7 @@ self.addEventListener('push', (event) => {
       const now = Date.now()
       const shown = await self.registration.getNotifications({ tag: NOTIFICATION_TAG }).catch(() => [])
       for (const n of expiredNotifications(shown, now)) n.close()
-      const spec = notificationFor(parsePushPayload(text), await peerName(), now)
+      const spec = notificationFor(parsePushPayload(text), now)
       await self.registration.showNotification(spec.title, spec.options)
     })(),
   )

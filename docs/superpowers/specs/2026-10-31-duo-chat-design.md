@@ -25,13 +25,13 @@ non-technical parent with an AI assistant.
 
 1. **Text chat with emoji** is the home screen. Two people, one conversation.
    Messages are ephemeral (1 hour). A message to an absent friend sends her a
-   content-free invitation push; a ping button calls her into the chat.
+   content-free «онлайн» push; an «онлайн» button does the same on purpose.
 2. **Calls without pressure** (owner, 2026-10-31): one call switch per side,
    OFF | AUDIO | VIDEO, in the chat. Calls are voice; video only when both
    chose it. No decline, no ring timeout, no call screen: the call happens
    inside the chat, which stays usable. See "Call switch and voice room".
 3. **Calling a friend who is not in the app** sends a push notification
-   ("<name> is calling you"). No ringing phone-style screen with a ringtone
+   (the same content-free «онлайн» as everything else). No ringing phone-style screen with a ringtone
    when the app is closed: the notification is enough. When the callee has the
    app open, her AUDIO button glows and a soft chime plays; tapping it joins.
 4. **Anti-spam on calling** (owner's rules, see "Call attempt rules").
@@ -76,8 +76,8 @@ The owner changed the call design to remove any pressure between the kids.
   enter the call and wait for her. I stay as long as my app is visible: no
   ring timeout. The moment my page is hidden (screen off, app switched, tab
   hidden, page closed) while I am still alone, my switch goes to OFF and the
-  server cancels the call. My side shows a soft «ждём <имя>…».
-- **Joining.** While I wait, her AUDIO glows with «<имя> зовёт» and a soft
+  server cancels the call. My side shows a soft «ждём…».
+- **Joining.** While I wait, her AUDIO glows with «Тебя зовут» and a soft
   WebAudio chime repeats (it stops by itself after a minute; the glow stays;
   no animation under prefers-reduced-motion). Her tapping AUDIO joins. There
   is **no decline**: not joining is the answer, and nothing tells me she saw it.
@@ -124,8 +124,11 @@ Cooldown length lives in one config constant.
 - A side is **present** while the app is visible, and for **1 minute** after
   it was hidden (switched away, screen off).
 - A side is **absent** after 1 minute hidden or when the app is closed.
-- Pushes go only to an absent side. To a present side, calls ring in the app;
-  «Позвать» is hidden while she is present, and messages just arrive.
+- Pushes go only to an absent side. To a present side, calls ring in the app
+  and messages just arrive.
+- **Presence is never shown** (owner, 2026-10-31): no dot, no «здесь/нет».
+  The server uses it only for push decisions and the device only to open the
+  direct link; nothing on screen may reveal whether the friend is in the app.
 
 ### Text messages (owner's rules)
 
@@ -155,37 +158,37 @@ Cooldown length lives in one config constant.
 - Messages are kept on the device (IndexedDB) only until expiry, so they
   survive a reload within the hour.
 
-### Invitations: ping, messages, voice room (owner's decisions, 2026-10-31)
+### Invitations: «онлайн», messages, voice room (owner's decisions, 2026-10-31)
 
-Three things can invite an absent friend: the «Позвать» button, a message
-written while she is away, and entering the voice room. They all look the same
-and share one budget, so the friend's parents never see spam.
+Three things tell an absent friend "I am online": the «онлайн» button, a
+message, and entering the voice room. They all look the same, share one
+budget, and never reveal to the sender whether the friend is in the app.
 
-- **One look.** Every invitation is the same notification: title «Дуо», body
-  «<имя> зовёт тебя 👋» (fallback «Подружка»). The trigger kind stays only in
-  the notification's data and decides where a click leads: a call one opens
-  the app and shows the missed-call card if the caller already left; the others
-  open the chat.
-- **One budget per sender**, counted on the server: first push; the next only
-  after `CALL_COOLDOWN_MS` (1 minute); after the second, nothing until 24 hours
-  later. A reply from the friend (a message, a ping or a call) resets it. The
-  call-attempt rules still govern the voice switch itself; only the push for a
-  room entry comes from this budget.
-- **Only to an absent friend.** While she is in the app, «Позвать» is hidden
-  (owner: no in-app nudges at all) and a message just arrives; nothing is
-  counted. A ping that reaches the server while she is present is ignored.
-- **The button shows the wait** (owner: so a kid does not tap it 10,000
-  times): after a push it is disabled with a countdown ring and the seconds
-  left; when the budget is used up, a calm disabled «🌙 завтра». A ping to a
-  friend who cannot get pushes (no subscription, or muted) spends nothing but
-  pauses the button the same minute. Taps on the disabled button do nothing (a
-  tiny shake, none under prefers-reduced-motion).
+- **One look, no pressure.** Every push is the same notification: title
+  «Дуо», body «онлайн». No names, no emoji, nothing to act on. The trigger kind
+  stays only in the notification's data and decides where a click leads.
+- **One budget per sender**, counted on the server for all three triggers:
+  the first is granted; the next only after `CALL_COOLDOWN_MS` (1 minute);
+  after the second, nothing until 24 hours later. A reply from the friend (a
+  message, «онлайн» or a call) resets it. The call-attempt rules still govern
+  the voice switch itself; only the push for a room entry comes from this
+  budget.
+- **Indistinguishable for the sender.** The budget is spent the same way
+  whether or not the friend is in the app, has push, or muted it; only an
+  absent, pushable friend actually gets the push. A room entry decides at
+  entry and pushes later if she leaves while it still waits. No result comes
+  back to the sender (no toast); the button's own state is the feedback.
+- **The «онлайн» button** (aria «Отправить статус онлайн») is always visible.
+  After use it is disabled with a countdown ring and the seconds left (owner:
+  so a kid does not tap it 10,000 times); when the budget is used up, a calm
+  disabled «🌙 завтра». Taps on the disabled button do nothing (a tiny shake,
+  none under prefers-reduced-motion). There are no in-app nudges.
 - **Mute bell** (per device, in the chat header, «Уведомления вкл/выкл»). Off:
-  this device gets no pushes at all (calls, pings, messages); the server
-  treats it like a device without a subscription (nothing counted). The choice
-  is kept on the device and re-sent on every connect. Turning it on when the
-  browser never allowed notifications runs the permission prompt first.
-- **Lifetime.** Web Push TTL for every invitation is 1 hour (`INVITE_TTL_MS`).
+  this device gets no pushes at all; the server treats it like a device
+  without a subscription. The choice is kept on the device and re-sent on
+  every connect. Turning it on when the browser never allowed notifications
+  runs the permission prompt first.
+- **Lifetime.** Web Push TTL for every push is 1 hour (`INVITE_TTL_MS`).
   One tag (`duo`) with renotify, so a new notification replaces the old one: at
   most one on screen. Ping and message notifications carry `expiresAt` (+1 h);
   the next push closes expired ones before showing. A call notification has no
@@ -210,13 +213,12 @@ and share one budget, so the friend's parents never see spam.
 ## Screens (all icon-first, big touch targets)
 
 - **Chat** — the only screen after setup (owner, 2026-10-31: "always start in
-  the chat"). Header with the friend and a "friend is here" indicator (my
-  call: presence decides whether a ping pushes and whether messages can go
-  out now). Under it a compact call bar: the call switch, one status line
-  («ждём <имя>…», «<имя> зовёт», the call timer, the cooldown countdown or
-  «никого нет») and the ping button (only while she is away: ready, a
-  countdown ring, or «🌙 завтра»). A bell in the header turns pushes to this
-  device on or off. While both are
+  the chat"). No names, pictures or presence anywhere: "me" is the right
+  bubbles, "the friend" the left ones. The header holds only the offline sign
+  and a bell that turns pushes to this device on or off. Under it a compact
+  call bar: the call switch, one status line («ждём…», «Тебя зовут», the call
+  timer, the cooldown countdown or «никого нет») and the «онлайн» button
+  (ready, a countdown ring, or «🌙 завтра»). While both are
   on VIDEO, a video block (friend big, me small) sits above the messages. The
   message list and the input with a large emoji picker stay usable during a
   call; the friend's audio keeps playing. No incoming popup, no full-screen
@@ -255,8 +257,7 @@ and share one budget, so the friend's parents never see spam.
     no content. It still sees metadata: when someone connects, calls, pings,
     that a message was written (`wrote`, never its text), push counters and
     whether a device muted pushes.
-  - Push text is one generic invitation for everything («Дуо: <name> зовёт
-    тебя 👋»); the name is added on the device, never sent.
+  - Push text is one fixed line for everything («Дуо» / «онлайн»).
 - **Identity and pairing:** no accounts, no passwords, exactly two device
   slots.
   - The adult opens setup on the first device; it generates the pair secret
@@ -269,11 +270,9 @@ and share one budget, so the friend's parents never see spam.
     check (who may connect to the pair's room).
   - Re-pairing a lost device: adult-only reset that creates a new pair secret
     and a new link; old device tokens are revoked.
-- **Names and avatars** (my call): never in the repo. The adult enters the
-  name and picks an avatar (from bundled generic pictures, no photo upload)
-  during pairing; kept only on the device and exchanged over the data channel
-  (never sent to the server). The service worker reads the peer's name from
-  local storage for notification text.
+- **No names and no avatars** (owner, 2026-10-31): there are only two people,
+  so the UI is "me" and "the friend". Nothing personal is entered at setup,
+  stored, exchanged or shown.
 - **Server secrets** (VAPID private key, TURN credentials, admin reset
   secret) live in Cloudflare secrets, never in the repo. The pair secret
   never reaches the server at all.
@@ -329,6 +328,6 @@ and share one budget, so the friend's parents never see spam.
 
 - Library choices (WebRTC helper or plain API, Web Push library that runs in
   Workers, emoji picker).
-- Exact visual design, avatars, colours, sounds.
+- Exact visual design, colours, sounds.
 - Reconnect behaviour on network blips.
 - Test strategy; a two-browser local test harness is expected.

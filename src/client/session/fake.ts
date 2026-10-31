@@ -4,7 +4,7 @@
 // main.ts imports it dynamically behind `import.meta.env.VITE_FAKE`, so the build drops it.
 
 import { markRaw, reactive } from 'vue'
-import type { CallEndReason, PingResult, RoomView } from '@shared/protocol'
+import type { CallEndReason, RoomView } from '@shared/protocol'
 import type { Side } from '@shared/types'
 import {
   CALL_ATTEMPTS_PER_ROUND,
@@ -15,7 +15,7 @@ import {
   VIDEO_UNLOCK_MS,
 } from '@shared/constants'
 import { MAX_MESSAGE_LENGTH, type ChatMessage } from '../messages/store'
-import type { CallMode, Connection, DuoSession, DuoState, NotificationResult, Profile } from './types'
+import type { CallMode, Connection, DuoSession, DuoState, NotificationResult } from './types'
 
 export type FakeOptions = {
   /** Start already paired, with a friend and a few messages (default), or on the setup screen. */
@@ -29,8 +29,7 @@ export type FakeOptions = {
 
 /** Knobs for the dev panel: everything the server or the friend could do. */
 export type FakeDev = {
-  /** peerHasPush: the friend turned notifications on (pings to her can be pushed). */
-  options: { autoReply: boolean; peerHasPush: boolean }
+  options: { autoReply: boolean }
   setPhase(phase: 'setup' | 'ready'): void
   setConnection(c: Connection): void
   peerJoins(): void
@@ -57,14 +56,12 @@ export type FakeDev = {
 
 export type FakeSession = DuoSession & { dev: FakeDev }
 
-const FRIEND: Profile = { name: 'Соня', avatar: 'fox' }
-const ME_DEFAULT: Profile = { name: 'Маша', avatar: 'bunny' }
 const REPLIES = ['😂', '🥰', '👍', 'Привет!', '🦄✨', 'Давай играть?', '🐱🐶', 'Ура! 🎉']
 
 export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   const now = opts.now ?? Date.now
   const latency = opts.latency ?? 400
-  const options = reactive({ autoReply: opts.autoReply ?? true, peerHasPush: true })
+  const options = reactive({ autoReply: opts.autoReply ?? true })
   let idSeq = 0
   let callAttempts = 0
   let pingPushes = 0
@@ -80,13 +77,10 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     self: null,
     missedCall: null,
     connection: 'online',
-    me: null,
-    peer: null,
     view: null,
     messages: [],
     pendingIds: [],
     directOpen: false,
-    lastPing: null,
     pushMuted: false,
     notificationsAllowed: true,
     myMode: 'off',
@@ -178,10 +172,9 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   const session: FakeSession = {
     state,
 
-    async createPair({ adminSecret, me }) {
+    async createPair({ adminSecret }) {
       await wait()
       if (!adminSecret.trim()) throw new Error('Нужен пароль администратора')
-      state.me = me
       state.self = 'a'
       state.view = baseView('a', false)
       state.phase = 'ready'
@@ -192,10 +185,8 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       return { link: `${location.origin}/#${secret}` }
     },
 
-    async joinPair({ me }) {
+    async joinPair() {
       await wait()
-      state.me = me
-      state.peer = { ...FRIEND }
       state.self = 'b'
       state.view = { ...baseView('b', true), peerPresent: true }
       state.phase = 'ready'
@@ -220,18 +211,11 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
 
     ping() {
       const v = view()
-      const result = (r: PingResult) => (state.lastPing = { result: r, at: now() })
-      // She is in the app (the button is hidden then), or the button is paused: ignored.
-      if (v.peerPresent || !v.peerPaired || v.ping.kind !== 'ready') return
-      // Nobody to push to: nothing is counted, but the button pauses like after a push.
-      if (!options.peerHasPush) {
-        pausePing()
-        return void result('held')
-      }
+      if (!v.peerPaired || v.ping.kind !== 'ready') return
+      // Spent the same way whether or not she is here (only pushes differ, invisibly).
       pingPushes++
       if (pingPushes >= PING_PUSHES_PER_ROUND) v.ping = { kind: 'exhausted', until: now() + LOCK_MS }
       else pausePing()
-      result('pushed')
     },
 
     async setPushMuted(muted) {
@@ -310,9 +294,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     options,
     setPhase(phase) {
       state.phase = phase
-      if (phase === 'ready' && !state.me) {
-        state.me = { ...ME_DEFAULT }
-        state.peer = { ...FRIEND }
+      if (phase === 'ready' && !state.self) {
         state.view = { ...baseView(mySide, true), peerPresent: true }
         state.self = mySide
         syncDirect()
@@ -326,7 +308,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       const v = view()
       v.peerPaired = true
       v.peerPresent = true
-      state.peer ??= { ...FRIEND }
       syncDirect()
     },
     peerLeaves() {
@@ -338,7 +319,6 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       const v = view()
       v.peerPaired = false
       v.peerPresent = false
-      state.peer = null
       syncDirect()
     },
     peerSays(text) {
