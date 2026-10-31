@@ -31,8 +31,12 @@ export type SideState = {
 
 export type RoomState = {
   sides: Record<Side, SideState>
-  /** A call ringing from `from` to the other side, ending unanswered at `until`. */
-  pendingCall: { from: Side; kind: CallKind; until: number } | null
+  /**
+   * A call ringing from `from` to the other side, ending unanswered at `until`.
+   * `pushed`: the callee already got the push for this call (at most one per call).
+   * Optional so that state persisted before the field existed still loads.
+   */
+  pendingCall: { from: Side; kind: CallKind; until: number; pushed?: boolean } | null
   activeCall: { kind: CallKind } | null
 }
 
@@ -103,6 +107,7 @@ export class RoomCore {
     if (this.#s.pendingCall?.from === side) fx.push(...this.#endPending('cancelled', now))
     // A dropped socket during a call ends it for the peer.
     if (this.#s.activeCall) fx.push(...this.#endActive())
+    fx.push(...this.#pushRinging(now))
     return [...fx, ...this.#views(now)]
   }
 
@@ -146,10 +151,10 @@ export class RoomCore {
           break
         }
         me.call = onCallPlaced(me.call, now)
-        this.#s.pendingCall = { from: side, kind: msg.kind, until: me.call.cooldownUntil! }
+        this.#s.pendingCall = { from: side, kind: msg.kind, until: me.call.cooldownUntil!, pushed: false }
         them.call = onCalledBack(them.call, now)
         them.ping = onPingReply()
-        if (!this.#reachable(peer, now)) fx.push({ type: 'push', to: peer, payload: { kind: 'call', callKind: msg.kind } })
+        fx.push(...this.#pushRinging(now))
         break
       }
 
@@ -186,12 +191,13 @@ export class RoomCore {
         them.ping = onPingReply()
         break
     }
+    fx.push(...this.#pushRinging(now))
     return [...fx, ...this.#views(now)]
   }
 
   /** Time-driven transitions: call timeout, presence grace expiry. */
   alarm(now: number): Effect[] {
-    return [...this.#tick(now), ...this.#views(now)]
+    return [...this.#tick(now), ...this.#pushRinging(now), ...this.#views(now)]
   }
 
   /** Earliest time `alarm` has something to do, or null. */
@@ -231,6 +237,21 @@ export class RoomCore {
   #reachable(side: Side, now: number): boolean {
     const s = this.#s.sides[side]
     return s.connected && isPresent(s.presence, now)
+  }
+
+  /**
+   * One push per ringing call, sent the moment the callee becomes unreachable: right away
+   * when the call is placed, or later when the callee's socket drops or its presence grace
+   * runs out while the call still rings (a callee who just hid the app would otherwise get
+   * an in-app ring nobody sees, and no push).
+   */
+  #pushRinging(now: number): Effect[] {
+    const pending = this.#s.pendingCall
+    if (!pending || pending.pushed) return []
+    const callee = otherSide(pending.from)
+    if (this.#reachable(callee, now)) return []
+    pending.pushed = true
+    return [{ type: 'push', to: callee, payload: { kind: 'call', callKind: pending.kind } }]
   }
 
   #updatePresence(side: Side, now: number): void {

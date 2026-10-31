@@ -178,3 +178,53 @@ describe('room: call rules across both sides', () => {
     expect(room.nextAlarmAt(T0)).toBe(T0 + LOCK_MS)
   })
 })
+
+describe('room: push for a ringing call when the callee turns unreachable', () => {
+  it('pushes when the hidden callee grace runs out while the call still rings', () => {
+    room.connect('a', T0)
+    room.connect('b', T0)
+    room.handle('b', { t: 'visibility', visible: false }, T0 + 1)
+    expect(pushes(room.handle('a', { t: 'call', kind: 'video' }, T0 + 2), 'b')).toEqual([])
+    const expiry = T0 + 1 + PRESENCE_GRACE_MS
+    expect(room.nextAlarmAt(T0 + 2)).toBe(expiry)
+    expect(pushes(room.alarm(expiry - 1), 'b')).toEqual([])
+    expect(pushes(room.alarm(expiry), 'b')).toEqual([{ kind: 'call', callKind: 'video' }])
+    // Once per call: later events do not push again.
+    expect(pushes(room.alarm(expiry + 10), 'b')).toEqual([])
+    expect(pushes(room.disconnect('b', expiry + 20), 'b')).toEqual([])
+  })
+
+  it('pushes when the callee socket drops while ringing, once', () => {
+    room.connect('a', T0)
+    room.connect('b', T0)
+    expect(pushes(room.handle('a', { t: 'call', kind: 'voice' }, T0), 'b')).toEqual([])
+    expect(pushes(room.disconnect('b', T0 + 1_000), 'b')).toEqual([{ kind: 'call', callKind: 'voice' }])
+    room.connect('b', T0 + 2_000)
+    expect(pushes(room.disconnect('b', T0 + 3_000), 'b')).toEqual([])
+  })
+
+  it('does not push again for a call already pushed when it was placed', () => {
+    room.connect('a', T0)
+    expect(pushes(room.handle('a', { t: 'call', kind: 'voice' }, T0), 'b')).toHaveLength(1)
+    expect(pushes(room.alarm(T0 + 1_000), 'b')).toEqual([])
+  })
+
+  it('does not push after the ringing call ended', () => {
+    room.connect('a', T0)
+    room.connect('b', T0)
+    room.handle('b', { t: 'visibility', visible: false }, T0 + 1)
+    room.handle('a', { t: 'call', kind: 'voice' }, T0 + 2)
+    room.handle('a', { t: 'callCancel' }, T0 + 3)
+    expect(pushes(room.alarm(T0 + 1 + PRESENCE_GRACE_MS), 'b')).toEqual([])
+  })
+
+  it('loads a pending call persisted without the pushed flag', () => {
+    room.connect('a', T0)
+    room.connect('b', T0)
+    room.handle('a', { t: 'call', kind: 'voice' }, T0)
+    const old = structuredClone(room.state)
+    delete old.pendingCall!.pushed
+    const restored = new RoomCore(old)
+    expect(pushes(restored.disconnect('b', T0 + 1), 'b')).toEqual([{ kind: 'call', callKind: 'voice' }])
+  })
+})
