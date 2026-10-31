@@ -1,0 +1,14 @@
+# Cloudflare static-asset headers. scripts/verify.ts compares the "/*" block with the live site.
+# WebSocket to the Worker is same-origin, so connect-src 'self' covers it.
+# TURN (WebRTC media relay) is not governed by CSP.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self' data:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(self), microphone=(self), geolocation=(), payment=(), usb=(), display-capture=()
+  X-Content-Type-Options: nosniff
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/version.json
+  Cache-Control: no-cache
