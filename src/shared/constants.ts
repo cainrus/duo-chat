@@ -6,6 +6,12 @@
  */
 export const CALL_COOLDOWN_MS = 60_000
 
+/**
+ * After this side's call switch goes OFF -> AUDIO, the VIDEO position stays locked this long,
+ * so a mis-tap never lands a kid in video.
+ */
+export const VIDEO_UNLOCK_MS = 3_000
+
 /** "Nobody's home" lock for calls, and the daily cap window for ping pushes. */
 export const LOCK_MS = 24 * 60 * 60_000
 

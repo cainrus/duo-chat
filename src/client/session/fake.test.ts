@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CALL_COOLDOWN_MS } from '@shared/constants'
+import { CALL_COOLDOWN_MS, VIDEO_UNLOCK_MS } from '@shared/constants'
 import { createFakeSession } from './fake'
 
 describe('fake session', () => {
@@ -12,35 +12,62 @@ describe('fake session', () => {
   it('two unanswered calls end in "nobody\'s home"', async () => {
     const s = make()
     const v = () => s.state.view!
-    const p1 = s.startCall('voice')
-    await vi.advanceTimersByTimeAsync(0)
-    await p1
-    expect(v().outgoing?.kind).toBe('voice')
+    await s.setMode('audio')
+    expect(s.state.myMode).toBe('audio')
+    expect(v().outgoing?.until).toBe(Date.now() + CALL_COOLDOWN_MS)
     expect(v().call.kind).toBe('cooldown')
 
     await vi.advanceTimersByTimeAsync(CALL_COOLDOWN_MS)
     expect(v().outgoing).toBeNull()
     expect(s.state.lastCallEnded).toBe('timeout')
+    expect(s.state.myMode).toBe('off')
     expect(v().call.kind).toBe('ready')
 
-    const p2 = s.startCall('video')
-    await vi.advanceTimersByTimeAsync(0)
-    await p2
+    await s.setMode('audio')
     s.dev.ringTimeout()
     expect(v().call.kind).toBe('nobodyHome')
   })
 
-  it('accepting an incoming call connects it and hang-up reports why', async () => {
+  it('AUDIO joins her call; OFF hangs up and reports why', async () => {
     const s = make()
-    s.dev.incoming('video')
-    const p = s.acceptCall()
-    await vi.advanceTimersByTimeAsync(0)
-    await p
-    expect(s.state.view!.inCall).toEqual({ kind: 'video' })
-    expect(s.state.view!.incoming).toBeNull()
-    s.hangUp()
-    expect(s.state.view!.inCall).toBeNull()
+    s.dev.incoming()
+    expect(s.state.peerMode).toBe('audio')
+    await s.setMode('audio')
+    expect(s.state.view!.inCall).toBe(true)
+    expect(s.state.view!.incoming).toBe(false)
+    await s.setMode('off')
+    expect(s.state.view!.inCall).toBe(false)
     expect(s.state.lastCallEnded).toBe('hangup')
+    expect(s.state).toMatchObject({ myMode: 'off', peerMode: 'off' })
+  })
+
+  it('her call nobody joins rings out as missed', () => {
+    const s = make()
+    s.dev.incoming()
+    s.dev.ringTimeout()
+    expect(s.state.view!.incoming).toBe(false)
+    expect(s.state.peerMode).toBe('off')
+    expect(s.state.missedCall).not.toBeNull()
+  })
+
+  it('VIDEO: locked from OFF and for a moment after AUDIO; video only while both are on VIDEO', async () => {
+    const s = make()
+    await s.setMode('video')
+    expect(s.state.myMode).toBe('off')
+    s.dev.incoming()
+    await s.setMode('audio')
+    await s.setMode('video')
+    expect(s.state.myMode).toBe('audio')
+    vi.advanceTimersByTime(VIDEO_UNLOCK_MS)
+    await s.setMode('video')
+    expect(s.state).toMatchObject({ myMode: 'video', peerMode: 'audio' })
+    expect(s.state.media.videoOn).toBe(false)
+    s.dev.peerMode('video')
+    expect(s.state.media.videoOn).toBe(true)
+    s.dev.peerMode('audio')
+    expect(s.state.media.videoOn).toBe(false)
+    s.dev.peerHangsUp()
+    expect(s.state).toMatchObject({ myMode: 'off', peerMode: 'off' })
   })
 
   it('ping pushes run out while the friend is away, and a reply resets them', () => {

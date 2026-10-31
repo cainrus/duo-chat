@@ -1,15 +1,12 @@
 <script setup lang="ts">
-// Root: theme, and which screen is up. Every screen reads the session from `inject('duo')`.
+// Root: theme, and which screen is up: setup, or the chat (calls happen inside the chat).
+// Every screen reads the session from `inject('duo')`.
 import { computed, inject, ref, watch, type Component } from 'vue'
 import { showToast } from 'vant'
-import type { CallKind } from '@shared/types'
 import { themeVars } from './ui/theme'
 import { useDuo } from './ui/useDuo'
 import SetupScreen from './ui/screens/SetupScreen.vue'
 import ChatScreen from './ui/screens/ChatScreen.vue'
-import IncomingCall from './ui/screens/IncomingCall.vue'
-import OutgoingCall from './ui/screens/OutgoingCall.vue'
-import InCall from './ui/screens/InCall.vue'
 import MediaAudio from './ui/components/MediaAudio.vue'
 
 const duo = useDuo()
@@ -27,8 +24,6 @@ watch(
 )
 const showSetup = computed(() => s.phase === 'setup' || wizard.value)
 
-const callMinimized = ref(false)
-
 // Which way the last call went, so "why it ended" can be told from our side.
 const lastRole = ref<'caller' | 'callee' | null>(null)
 watch(
@@ -41,8 +36,8 @@ watch(
 )
 
 const NOTES = {
-  caller: { declined: 'Сейчас не может 🙈', timeout: 'Не ответила 🤷', cancelled: null, hangup: 'Пока-пока 👋' },
-  callee: { declined: null, timeout: null, cancelled: null, hangup: 'Пока-пока 👋' },
+  caller: { timeout: 'Не ответила 🤷', cancelled: null, hangup: 'Пока-пока 👋' },
+  callee: { timeout: null, cancelled: null, hangup: 'Пока-пока 👋' },
 } as const
 
 // The session sets lastCallEnded; the UI shows a short note and asks the session to clear it.
@@ -57,9 +52,9 @@ watch(
   },
 )
 
-function callBack(kind: CallKind) {
+function callBack() {
   duo.dismissMissedCall()
-  void duo.startCall(kind)
+  void duo.setMode('audio')
 }
 </script>
 
@@ -67,12 +62,9 @@ function callBack(kind: CallKind) {
   <van-config-provider :theme-vars="themeVars" theme="light" theme-vars-scope="global">
     <SetupScreen v-if="showSetup" @done="wizard = false" />
     <template v-else>
-      <ChatScreen :missed-call="s.missedCall?.kind ?? null" @call-back="callBack" @dismiss-missed="duo.dismissMissedCall()" />
-      <OutgoingCall />
-      <IncomingCall />
-      <InCall v-model:minimized="callMinimized" />
+      <ChatScreen :missed-call="!!s.missedCall" @call-back="callBack" @dismiss-missed="duo.dismissMissedCall()" />
     </template>
-    <!-- Remote audio lives here so it keeps playing while the call screen is hidden. -->
+    <!-- Remote audio lives at the root, so it plays whatever the chat shows. -->
     <MediaAudio v-if="s.view?.inCall" :stream="s.media.remote" />
     <component :is="devPanel" v-if="devPanel" />
   </van-config-provider>

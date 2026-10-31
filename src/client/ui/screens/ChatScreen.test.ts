@@ -10,7 +10,7 @@ const bubbles = (w: { findAll: (s: string) => { text: () => string }[] }) =>
 
 describe('ChatScreen', () => {
   it('a message disappears when it is removed from state (expiry)', async () => {
-    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
     const first = session.state.messages[0]!.text
     expect(bubbles(wrapper)).toContain(first)
     const count = bubbles(wrapper).length
@@ -23,7 +23,7 @@ describe('ChatScreen', () => {
   })
 
   it('sends typed text through the session and clears the input', async () => {
-    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
     const before = session.state.messages.length
     await wrapper.get('textarea').setValue('Привет 🦄')
     await wrapper.get('[data-test="send"]').trigger('click')
@@ -33,7 +33,7 @@ describe('ChatScreen', () => {
   })
 
   it('a message that has not reached the friend shows a clock until it is sent', async () => {
-    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
     expect(wrapper.findAll('[data-test="pending"]')).toHaveLength(0)
     session.dev.peerLeaves()
     session.sendText('ты где?')
@@ -47,14 +47,11 @@ describe('ChatScreen', () => {
     expect(wrapper.findAll('.row').at(-1)!.get('[data-test="bubble"]').classes()).not.toContain('pending')
   })
 
-  it('the error bar sits above the floating call bubble and its × dismisses it', async () => {
-    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
+  it('the error bar × dismisses it', async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
     session.dev.setError('Нет доступа к микрофону')
     await nextTick()
     const bar = wrapper.get('[data-test="error"]')
-    // Vant's floating bubble uses z-index 999 (--van-floating-bubble-z-index).
-    expect(Number((bar.element as HTMLElement).style.zIndex)).toBeGreaterThan(999)
-    expect((bar.element as HTMLElement).style.position).toBe('relative')
     const close = bar.get('button[aria-label="Закрыть"]')
     await close.trigger('click')
     expect(session.state.error).toBeNull()
@@ -67,7 +64,7 @@ describe('ChatScreen', () => {
   })
 
   it('pressing ping shows what became of it', async () => {
-    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: null }, attachTo: document.body })
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: false }, attachTo: document.body })
     const toastText = () => [...document.querySelectorAll('.van-toast')].map((t) => t.textContent ?? '').join('|')
     await wrapper.get('[aria-label="Позвать в чат"]').trigger('click')
     await vi.waitFor(() => expect(toastText()).toContain('Позвала 👋'))
@@ -82,14 +79,14 @@ describe('ChatScreen', () => {
   })
 
   it('my messages and the friend’s messages sit on different sides', async () => {
-    const { wrapper } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
+    const { wrapper } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
     const rows = wrapper.findAll('.row')
     expect(rows.some((r) => r.classes('mine'))).toBe(true)
     expect(rows.some((r) => !r.classes('mine'))).toBe(true)
   })
 
   it('shows presence and the missed-call card', async () => {
-    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: 'voice' } })
+    const { wrapper, session } = mountWithDuo(ChatScreen, { props: { missedCall: true } })
     expect(wrapper.get('[data-test="presence"]').text()).toBe('здесь')
     expect(wrapper.find('[data-test="missed-call"]').exists()).toBe(true)
     session.dev.peerLeaves()
@@ -98,7 +95,7 @@ describe('ChatScreen', () => {
   })
 
   it('emoji keyboard inserts emoji into the input', async () => {
-    const { wrapper } = mountWithDuo(ChatScreen, { props: { missedCall: null } })
+    const { wrapper } = mountWithDuo(ChatScreen, { props: { missedCall: false } })
     await wrapper.get('[aria-label="Смайлики"]').trigger('click')
     const kb = wrapper.get('[data-test="emoji-keyboard"]')
     await kb.findAll('.van-grid-item')[0]!.trigger('click')

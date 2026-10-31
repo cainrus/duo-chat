@@ -19,7 +19,7 @@ input {
   -webkit-user-select: text;
 }
 
-/* Big icon button with a caption under it: ping, call, in-call controls. */
+/* Big icon button with a caption under it (the ping button). */
 .action-tile {
   display: flex;
   flex-direction: column;
@@ -30,17 +30,9 @@ input {
   width: 72px;
   padding: 0;
 }
-.action-btn--xl.van-button {
-  width: 96px;
-  height: 96px;
-}
 .action-icon {
   width: 34px;
   height: 34px;
-}
-.action-btn--xl .action-icon {
-  width: 44px;
-  height: 44px;
 }
 .action-caption {
   min-height: 22px;
@@ -51,106 +43,20 @@ input {
 .action-caption .van-count-down {
   color: var(--van-text-color-2);
 }
-.caption-warn {
-  color: var(--van-text-color);
-  font-weight: 600;
-}
 .caption-muted {
   color: var(--van-text-color-3);
 }
 
-/* Ringing screens (incoming / outgoing). */
-.ring.van-popup {
-  display: flex;
-  flex-direction: column;
-  background: linear-gradient(180deg, #f3ecff 0%, var(--van-background) 70%);
-}
-.ring-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-}
-.ring-avatar {
-  border-radius: 50%;
-  margin-bottom: 20px;
-  animation: ring-glow 1.6s ease-out infinite;
-}
-.ring-name {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--van-text-color);
-}
-.ring-kind {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: var(--van-font-size-lg);
-  color: var(--van-text-color-2);
-}
-.kind-icon {
-  width: 28px;
-  height: 28px;
-  color: var(--van-primary-color);
-}
-.ring-timer {
-  font-size: var(--van-font-size-md);
-  color: var(--van-text-color-3);
-}
-.ring-actions {
-  padding: 16px 16px 40px;
-  max-width: 520px;
-  width: 100%;
-  margin: 0 auto;
-  box-sizing: border-box;
-}
-.ring-actions .van-grid-item__content {
-  background: transparent;
-}
-.ring-actions--single {
-  display: flex;
-  justify-content: center;
-}
-.pulse {
-  animation: pulse 1.2s ease-in-out infinite;
+.wiggle {
+  animation: pulse 0.4s ease-in-out 2;
 }
 @keyframes pulse {
   50% {
     transform: scale(1.08);
   }
 }
-@keyframes ring-glow {
-  0% {
-    box-shadow: 0 0 0 0 rgba(108, 92, 231, 0.35);
-  }
-  100% {
-    box-shadow: 0 0 0 36px rgba(108, 92, 231, 0);
-  }
-}
-.wiggle {
-  animation: pulse 0.4s ease-in-out 2;
-}
 @media (prefers-reduced-motion: reduce) {
-  .ring-avatar,
-  .pulse,
   .wiggle {
     animation: none;
   }
-}
-
-/* Floating bubbles are teleported to <body>, so scoped styles do not reach them. */
-.van-floating-bubble.self-view {
-  /* Not in Vant's typed theme vars; the CSS variables exist. */
-  --van-floating-bubble-size: 120px;
-  --van-floating-bubble-border-radius: 20px;
-  --van-floating-bubble-z-index: 2600;
-  overflow: hidden;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-  border: 3px solid rgba(255, 255, 255, 0.85);
-}
-.van-floating-bubble.back-bubble {
-  --van-floating-bubble-background: var(--van-success-color);
-  box-shadow: 0 6px 18px rgba(34, 176, 125, 0.45);
 }

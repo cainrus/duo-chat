@@ -5,16 +5,17 @@
 
 import { markRaw, reactive } from 'vue'
 import type { CallEndReason, PingResult, RoomView } from '@shared/protocol'
-import type { CallKind, Side } from '@shared/types'
+import type { Side } from '@shared/types'
 import {
   CALL_ATTEMPTS_PER_ROUND,
   CALL_COOLDOWN_MS,
   LOCK_MS,
   MESSAGE_TTL_MS,
   PING_PUSHES_PER_ROUND,
+  VIDEO_UNLOCK_MS,
 } from '@shared/constants'
 import { MAX_MESSAGE_LENGTH, type ChatMessage } from '../messages/store'
-import type { Connection, DuoSession, DuoState, NotificationResult, Profile } from './types'
+import type { CallMode, Connection, DuoSession, DuoState, NotificationResult, Profile } from './types'
 
 export type FakeOptions = {
   /** Start already paired, with a friend and a few messages (default), or on the setup screen. */
@@ -40,18 +41,20 @@ export type FakeDev = {
   expireOldest(): void
   clearChat(): void
   nudge(): void
-  incoming(kind: CallKind): void
+  /** She calls us (her switch to AUDIO). */
+  incoming(): void
   peerCancels(): void
+  /** She joins our ringing call. */
   peerAccepts(): void
-  peerDeclines(): void
   ringTimeout(): void
   peerHangsUp(): void
-  peerCamera(on: boolean): void
+  /** Her switch during a call: AUDIO or VIDEO. */
+  peerMode(mode: 'audio' | 'video'): void
   setCallView(kind: 'ready' | 'cooldown' | 'nobodyHome'): void
   setPingView(kind: 'ready' | 'exhausted'): void
   setError(text: string | null): void
   /** The app was opened from a call notification after the call was already gone. */
-  missedFromPush(kind?: CallKind): void
+  missedFromPush(): void
 }
 
 export type FakeSession = DuoSession & { dev: FakeDev }
@@ -87,7 +90,10 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     directOpen: false,
     nudgeAt: null,
     lastPing: null,
-    media: { local: null, remote: null, micOn: true, camOn: false },
+    myMode: 'off',
+    peerMode: 'off',
+    videoUnlockAt: null,
+    media: { local: null, remote: null, videoOn: false },
     lastCallEnded: null,
     error: null,
   })
@@ -113,22 +119,31 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     for (const s of [state.media.local, state.media.remote]) s?.getTracks().forEach((t) => t.stop())
     state.media.local = null
     state.media.remote = null
+    state.media.videoOn = false
   }
-  const startMedia = (kind: CallKind) => {
-    state.media.micOn = true
-    state.media.camOn = kind === 'video'
-    state.media.local = kind === 'video' ? fakeCamera('🐰', '#6C5CE7', '#FFB23F') : null
-    state.media.remote = kind === 'video' ? fakeCamera('🦊', '#22B07D', '#6C5CE7') : null
+  /** Video only while both switches are on VIDEO, like the real session. */
+  const syncVideo = () => {
+    const want = !!state.view?.inCall && state.myMode === 'video' && state.peerMode === 'video'
+    if (want === state.media.videoOn) return
+    stopMedia()
+    if (!want) return
+    state.media.videoOn = true
+    state.media.local = fakeCamera('🐰', '#6C5CE7', '#FFB23F')
+    state.media.remote = fakeCamera('🦊', '#22B07D', '#6C5CE7')
+  }
+  const endCall = () => {
+    stopMedia()
+    state.myMode = 'off'
+    state.peerMode = 'off'
+    state.videoUnlockAt = null
   }
 
   // --- call attempt rules, simplified from the server's state machine ---
-  const finishAttempt = (endedEarly: boolean) => {
+  /** The call ended unanswered: the cooldown ends with it; out of attempts locks the button. */
+  const finishAttempt = () => {
     const v = view()
-    if (callAttempts >= CALL_ATTEMPTS_PER_ROUND) {
-      v.call = { kind: 'nobodyHome', until: now() + LOCK_MS }
-    } else if (endedEarly || v.call.kind !== 'cooldown') {
-      v.call = { kind: 'ready' }
-    }
+    clearTimeout(cooldownTimer)
+    v.call = callAttempts >= CALL_ATTEMPTS_PER_ROUND ? { kind: 'nobodyHome', until: now() + LOCK_MS } : { kind: 'ready' }
   }
   const scheduleCooldownEnd = (until: number) => {
     clearTimeout(cooldownTimer)
@@ -137,15 +152,23 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       if (v.call.kind === 'cooldown') v.call = { kind: 'ready' }
     }, Math.max(0, until - now()))
   }
-  const connect = (kind: CallKind) => {
+  const connect = () => {
     const v = view()
     clearTimeout(ringTimer)
     v.outgoing = null
-    v.incoming = null
-    v.inCall = { kind }
+    v.incoming = false
+    v.inCall = true
     v.call = { kind: 'ready' }
     callAttempts = 0
-    startMedia(kind)
+    state.myMode = 'audio'
+    state.peerMode = 'audio'
+  }
+  const hangUp = (reason: CallEndReason) => {
+    const v = view()
+    if (!v.inCall) return
+    v.inCall = false
+    endCall()
+    state.lastCallEnded = reason
   }
 
   const session: FakeSession = {
@@ -202,60 +225,42 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       result('pushed')
     },
 
-    async startCall(kind) {
+    async setMode(mode: CallMode) {
       const v = view()
-      if (v.call.kind !== 'ready' || v.outgoing || v.inCall || v.incoming) return
-      await wait()
-      state.missedCall = null
-      const until = now() + CALL_COOLDOWN_MS
-      callAttempts++
-      v.outgoing = { kind, until }
-      v.call = { kind: 'cooldown', until }
-      scheduleCooldownEnd(until)
-      ringTimer = setTimeout(() => dev.ringTimeout(), until - now())
-    },
-
-    cancelCall() {
-      const v = view()
-      if (!v.outgoing) return
-      clearTimeout(ringTimer)
-      v.outgoing = null
-      state.lastCallEnded = 'cancelled'
-      finishAttempt(false)
-    },
-
-    async acceptCall() {
-      const v = view()
-      if (!v.incoming) return
-      await wait()
-      state.missedCall = null
-      connect(v.incoming.kind)
-    },
-
-    declineCall() {
-      const v = view()
-      v.incoming = null
-    },
-
-    hangUp() {
-      const v = view()
-      if (!v.inCall) return
-      v.inCall = null
-      stopMedia()
-      state.lastCallEnded = 'hangup'
-    },
-
-    setMic(on) {
-      state.media.micOn = on
-    },
-
-    async setCamera(on) {
-      state.media.camOn = on
-      if (on && !state.media.local) state.media.local = fakeCamera('🐰', '#6C5CE7', '#FFB23F')
-      if (!on && state.media.local) {
-        state.media.local.getTracks().forEach((t) => t.stop())
-        state.media.local = null
+      const from = state.myMode
+      if (mode === from) return
+      if (mode === 'off') {
+        if (v.inCall) return hangUp('hangup')
+        if (v.outgoing) {
+          clearTimeout(ringTimer)
+          v.outgoing = null
+          state.lastCallEnded = 'cancelled'
+          finishAttempt()
+        }
+        endCall()
+        return
       }
+      if (from === 'off') {
+        if (mode !== 'audio' || v.inCall || v.outgoing) return
+        if (v.incoming) {
+          state.missedCall = null
+          connect()
+        } else if (v.peerPaired && v.call.kind === 'ready') {
+          state.missedCall = null
+          const until = now() + CALL_COOLDOWN_MS
+          callAttempts++
+          v.outgoing = { until }
+          v.call = { kind: 'cooldown', until }
+          scheduleCooldownEnd(until)
+          ringTimer = setTimeout(() => dev.ringTimeout(), until - now())
+        } else return
+        state.myMode = 'audio'
+        state.videoUnlockAt = now() + VIDEO_UNLOCK_MS
+        return
+      }
+      if (mode === 'video' && now() < (state.videoUnlockAt ?? Infinity)) return
+      state.myMode = mode
+      syncVideo()
     },
 
     dismissCallEnded() {
@@ -273,8 +278,8 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     dev: undefined as unknown as FakeDev,
   }
 
-  const missed = (kind: CallKind) => {
-    state.missedCall = { kind, at: now() }
+  const missed = () => {
+    state.missedCall = { at: now() }
   }
 
   const end = (reason: CallEndReason) => {
@@ -348,54 +353,48 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     nudge() {
       state.nudgeAt = now()
     },
-    incoming(kind) {
+    incoming() {
       const v = view()
+      if (v.inCall || v.outgoing) return
       state.missedCall = null
-      v.incoming = { kind }
+      v.incoming = true
+      state.peerMode = 'audio'
     },
     peerCancels() {
       const v = view()
       if (!v.incoming) return
-      missed(v.incoming.kind)
-      v.incoming = null
+      missed()
+      v.incoming = false
+      state.peerMode = 'off'
       end('cancelled')
     },
     peerAccepts() {
       const v = view()
-      if (v.outgoing) connect(v.outgoing.kind)
-    },
-    peerDeclines() {
-      const v = view()
-      if (!v.outgoing) return
-      clearTimeout(ringTimer)
-      v.outgoing = null
-      end('declined')
-      finishAttempt(true)
+      if (v.outgoing) connect()
     },
     ringTimeout() {
       const v = view()
       if (v.incoming) {
-        missed(v.incoming.kind)
-        v.incoming = null
+        missed()
+        v.incoming = false
+        state.peerMode = 'off'
         end('timeout')
         return
       }
       if (!v.outgoing) return
       clearTimeout(ringTimer)
       v.outgoing = null
+      endCall()
       end('timeout')
-      finishAttempt(false)
+      finishAttempt()
     },
     peerHangsUp() {
-      const v = view()
-      if (!v.inCall) return
-      v.inCall = null
-      stopMedia()
-      end('hangup')
+      hangUp('hangup')
     },
-    peerCamera(on) {
-      state.media.remote?.getTracks().forEach((t) => t.stop())
-      state.media.remote = on ? fakeCamera('🦊', '#22B07D', '#6C5CE7') : null
+    peerMode(mode) {
+      if (!view().inCall) return
+      state.peerMode = mode
+      syncVideo()
     },
     setCallView(kind) {
       const v = view()
@@ -419,10 +418,11 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     setError(text) {
       state.error = text
     },
-    missedFromPush(kind = 'voice') {
+    missedFromPush() {
       const v = view()
-      v.incoming = null
-      missed(kind)
+      v.incoming = false
+      state.peerMode = 'off'
+      missed()
     },
   }
   session.dev = dev
@@ -450,9 +450,9 @@ function baseView(self: Side, peerPaired: boolean): RoomView {
     peerPresent: false,
     call: { kind: 'ready' },
     ping: { kind: 'ready' },
-    incoming: null,
+    incoming: false,
     outgoing: null,
-    inCall: null,
+    inCall: false,
   }
 }
 

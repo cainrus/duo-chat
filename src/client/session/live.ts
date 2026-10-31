@@ -3,7 +3,8 @@
 //
 // What goes where:
 // - server (ServerLink): presence, call/ping rules, sealed WebRTC signaling. Never chat text.
-// - friend (PeerLink data channel): chat messages and profiles (name + avatar).
+// - friend (PeerLink data channel): chat messages, profiles (name + avatar) and the call
+//   switch (OFF | AUDIO | VIDEO) during a call.
 // - device (IndexedDB): pairing record (device/config.ts) and unexpired messages.
 //
 // Everything that touches the browser or the network is injectable (LiveDeps), so the flows
@@ -11,7 +12,8 @@
 
 import { markRaw, reactive, watch } from 'vue'
 import type { CallEndReason, PushSubscriptionJSONLike, RoomView, ServerToClient } from '@shared/protocol'
-import type { CallKind, Side } from '@shared/types'
+import type { Side } from '@shared/types'
+import { VIDEO_UNLOCK_MS } from '@shared/constants'
 import { decodeSecret, derivePairKeys, encodeSecret, generatePairSecret, pairingLink } from '../crypto/pair'
 import { deviceConfigStore, isProfile, type DeviceConfig, type DeviceConfigStore } from '../device/config'
 import { idbPersistence } from '../messages/idbPersistence'
@@ -20,7 +22,7 @@ import { connectServerLink, type LinkStatus, type ServerLink } from '../net/serv
 import { parseCallPushUrl } from '../push/notification'
 import { currentSubscription, requestNotifications } from '../push/subscribe'
 import { PeerLink, type DataFrame } from '../rtc/peerLink'
-import type { Connection, DuoSession, DuoState, NotificationResult, Profile } from './types'
+import type { CallMode, Connection, DuoSession, DuoState, NotificationResult, Profile } from './types'
 
 /** The part of PeerLink the session uses (a fake implements it in tests). */
 export type PeerLinkLike = Pick<
@@ -198,15 +200,6 @@ type Runtime = {
   peerWanted: boolean
 }
 
-/** Local media of the current (or starting) call. */
-type CallMedia = {
-  stream: MediaStream
-  /** The server confirmed the call (outgoing ringing or connected). */
-  confirmed: boolean
-  /** Handed to the PeerLink (only once the call is connected). */
-  attached: boolean
-}
-
 export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   const deps: LiveDeps = { ...defaultDeps(opts), ...opts.deps }
 
@@ -223,7 +216,10 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     directOpen: false,
     nudgeAt: null,
     lastPing: null,
-    media: { local: null, remote: null, micOn: false, camOn: false },
+    myMode: 'off',
+    peerMode: 'off',
+    videoUnlockAt: null,
+    media: { local: null, remote: null, videoOn: false },
     lastCallEnded: null,
     error: null,
   })
@@ -243,15 +239,24 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
    * have gone out before she was ready for it.
    */
   let profileAnswered = false
-  let media: CallMedia | null = null
-  /** A call action is waiting for getUserMedia; no second one starts meanwhile. */
-  let acquiring = false
-  /** The kind of the call ringing towards us, while it rings. */
-  let ringing: CallKind | null = null
-  /** We accepted or declined the ringing call (so its end is not "missed"). */
+  /**
+   * Local media of the connected call: the microphone, plus the camera's video track while
+   * both switches are on VIDEO. Opened only once the server reports the call connected, and
+   * handed to the PeerLink right away.
+   */
+  let callStream: MediaStream | null = null
+  /** getUserMedia for the call's microphone is in flight. */
+  let micPending = false
+  /** The microphone could not be opened for this call (asked once per call). */
+  let micFailed = false
+  /** getUserMedia for the camera is in flight. */
+  let camPending = false
+  /** A call is ringing towards us. */
+  let ringing = false
+  /** We joined the ringing call (so its end is not "missed"). */
   let responded = false
   /** Opened from a call notification: decide "missed" on the next view. */
-  let pushedCall: { kind: CallKind; at: number } | null = null
+  let pushedCall: { at: number } | null = null
 
   const pageOffs: (() => void)[] = []
 
@@ -378,9 +383,6 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
   // ---------- media ----------
 
-  const constraints = (kind: CallKind): MediaStreamConstraints =>
-    kind === 'video' ? { audio: AUDIO, video: VIDEO } : { audio: AUDIO, video: false }
-
   const acquire = async (c: MediaStreamConstraints): Promise<MediaStream | null> => {
     try {
       const stream = markRaw(await deps.getUserMedia(c))
@@ -397,23 +399,103 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     for (const t of s.getTracks()) t.stop()
   }
 
-  const useMedia = (stream: MediaStream, kind: CallKind) => {
-    media = { stream, confirmed: false, attached: false }
-    state.media.local = stream
-    state.media.micOn = true
-    state.media.camOn = kind === 'video'
-  }
-
+  /** Releases the call's microphone and camera. */
   const endMedia = () => {
-    const m = media
-    media = null
-    if (m) {
-      stopStream(m.stream)
-      if (m.attached) rt?.peer.setLocalStream(null)
+    const s = callStream
+    callStream = null
+    micFailed = false
+    if (s) {
+      stopStream(s)
+      rt?.peer.setLocalStream(null)
     }
     state.media.local = null
-    state.media.micOn = false
-    state.media.camOn = false
+    state.media.videoOn = false
+  }
+
+  /** The call is over: media released, both switches back to OFF. */
+  const endCall = () => {
+    endMedia()
+    state.myMode = 'off'
+    state.peerMode = 'off'
+    state.videoUnlockAt = null
+  }
+
+  /** The call connected (both switches on AUDIO or VIDEO): only now open the microphone. */
+  const openMic = async () => {
+    const r = rt
+    if (!r || callStream || micPending || micFailed) return
+    micPending = true
+    const stream = await acquire({ audio: AUDIO, video: false })
+    micPending = false
+    if (!stream) {
+      // No microphone: the error stays on screen and the call ends cleanly for both.
+      if (rt === r && state.view?.inCall) {
+        micFailed = true
+        r.link.send({ t: 'callEnd' })
+        state.myMode = 'off'
+        state.videoUnlockAt = null
+      }
+      return
+    }
+    if (rt !== r || !state.view?.inCall || callStream) {
+      stopStream(stream)
+      return
+    }
+    callStream = stream
+    state.media.local = stream
+    r.peer.setLocalStream(stream)
+    await syncVideo()
+  }
+
+  /**
+   * Video follows the two switches: the camera runs only while both are on VIDEO. When either
+   * leaves VIDEO, the camera is stopped (its light goes off) and its track removed: voice.
+   */
+  const syncVideo = async (): Promise<void> => {
+    const s = callStream
+    if (!s) {
+      state.media.videoOn = false
+      return
+    }
+    const wanted = () => callStream === s && state.myMode === 'video' && state.peerMode === 'video'
+    const video = s.getVideoTracks()
+    if (wanted() && video.some((t) => t.readyState === 'live')) {
+      state.media.videoOn = true
+      return
+    }
+    if (video.length) {
+      for (const t of video) {
+        t.stop()
+        s.removeTrack(t)
+      }
+      rt?.peer.setLocalStream(s)
+    }
+    state.media.videoOn = false
+    if (!wanted() || camPending) return
+    camPending = true
+    const cam = await acquire({ audio: false, video: VIDEO })
+    camPending = false
+    if (!cam) {
+      // No camera: our switch steps back to AUDIO, and the friend is told.
+      if (callStream === s && state.myMode === 'video') {
+        state.myMode = 'audio'
+        sendMode()
+      }
+      return
+    }
+    const track = cam.getVideoTracks()[0]
+    if (!track || !wanted()) {
+      stopStream(cam)
+      return
+    }
+    s.addTrack(track)
+    rt?.peer.setLocalStream(s)
+    state.media.videoOn = true
+  }
+
+  /** Tells the friend our switch position, device to device (never via the server). */
+  const sendMode = () => {
+    if (rt?.peer.dataOpen && state.view?.inCall) rt.peer.sendData({ t: 'mode', mode: state.myMode })
   }
 
   // ---------- server frames ----------
@@ -422,16 +504,16 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     const prev = state.view
     state.view = view
 
-    // Missed call: it rang towards us and stopped without us answering.
+    // Missed call: it rang towards us and stopped without us joining.
     if (view.incoming) {
       if (!prev?.incoming) {
         state.missedCall = null
         responded = false
       }
-      ringing = view.incoming.kind
+      ringing = true
     } else if (ringing) {
-      if (!view.inCall && !responded) state.missedCall = { kind: ringing, at: deps.now() }
-      ringing = null
+      if (!view.inCall && !responded) state.missedCall = { at: deps.now() }
+      ringing = false
     }
     if (pushedCall) {
       const p = pushedCall
@@ -439,14 +521,22 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       if (!view.incoming && !view.inCall) state.missedCall = p
     }
 
-    // Call media follows the server's call state.
-    if (media) {
-      if (view.outgoing || view.inCall) media.confirmed = true
-      if (view.inCall && !media.attached) {
-        media.attached = true
-        rt?.peer.setLocalStream(media.stream)
+    // The switches and call media follow the server's call state: nothing opens while it
+    // rings, the mic once connected.
+    if (view.inCall) {
+      if (!prev?.inCall) {
+        // Both switches are at least on AUDIO to get here; her exact one comes over the channel.
+        if (state.myMode === 'off') state.myMode = 'audio'
+        if (state.peerMode === 'off') state.peerMode = 'audio'
+        sendMode()
       }
-      if (media.confirmed && !view.outgoing && !view.inCall) endMedia()
+      void openMic()
+    } else {
+      if (callStream || prev?.inCall) endCall()
+      // While she calls us, her switch is on AUDIO.
+      state.peerMode = view.incoming ? 'audio' : 'off'
+      // Our call stopped ringing without connecting (timeout, cancel): back to OFF.
+      if (prev?.outgoing && !view.outgoing) endCall()
     }
 
     // The direct link lives while the friend is around.
@@ -461,10 +551,10 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
   const onCallEnded = (reason: CallEndReason) => {
     state.lastCallEnded = reason
     if (ringing && !responded && (reason === 'cancelled' || reason === 'timeout')) {
-      state.missedCall = { kind: ringing, at: deps.now() }
+      state.missedCall = { at: deps.now() }
     }
-    ringing = null
-    endMedia()
+    ringing = false
+    endCall()
   }
 
   const onServer = (msg: ServerToClient) => {
@@ -483,8 +573,8 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
         if (msg.code === 'unauthorized') return void revoked()
         if (msg.code === 'not-allowed') {
           setError(T.notAllowed)
-          // A call the server refused never got confirmed: release the mic and camera.
-          if (media && !media.confirmed) endMedia()
+          // A refused call: the switch goes back to OFF.
+          if (!state.view?.inCall && !state.view?.outgoing) endCall()
         }
         return
       case 'signal':
@@ -512,6 +602,13 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       return
     }
     if (frame.t === 'ack') return onAck(frame.ids)
+    if (frame.t === 'mode') {
+      // Only during a call; both switches go back to OFF when it ends.
+      if (!state.view?.inCall) return
+      state.peerMode = frame.mode
+      void syncVideo()
+      return
+    }
     if (frame.t === 'profile' && isProfile(frame.p)) {
       if (!profileAnswered) {
         profileAnswered = true
@@ -539,6 +636,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     clearResend()
     if (!open || !rt) return
     sendProfile()
+    sendMode()
     flushOutbox()
   }
 
@@ -562,8 +660,8 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     retryTimer = null
     clearResend()
     sentAt.clear()
-    endMedia()
-    ringing = null
+    endCall()
+    ringing = false
     if (!r) return
     for (const off of r.offs) off()
     r.peer.close()
@@ -735,100 +833,42 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       rt?.link.send({ t: 'ping' })
     },
 
-    async startCall(kind) {
+    // No getUserMedia here: the mic opens only once the server reports the call connected.
+    async setMode(mode: CallMode) {
       const r = rt
       const v = state.view
-      if (!r || !v || acquiring || media) return
-      if (v.outgoing || v.inCall || v.incoming || v.call.kind !== 'ready') return
-      state.missedCall = null
-      acquiring = true
-      const stream = await acquire(constraints(kind))
-      acquiring = false
-      if (!stream) return
-      if (rt !== r || state.view?.outgoing || state.view?.inCall || state.view?.incoming) {
-        stopStream(stream)
+      const from = state.myMode
+      if (!r || !v || mode === from) return
+
+      if (mode === 'off') {
+        if (v.inCall) r.link.send({ t: 'callEnd' })
+        else if (v.outgoing) r.link.send({ t: 'callCancel' })
+        endMedia()
+        state.myMode = 'off'
+        state.videoUnlockAt = null
         return
       }
-      useMedia(stream, kind)
-      r.link.send({ t: 'call', kind })
-    },
 
-    cancelCall() {
-      rt?.link.send({ t: 'callCancel' })
-      endMedia()
-    },
-
-    async acceptCall() {
-      const r = rt
-      const incoming = state.view?.incoming
-      if (!r || !incoming || acquiring || media) return
-      state.missedCall = null
-      responded = true
-      acquiring = true
-      const stream = await acquire(constraints(incoming.kind))
-      acquiring = false
-      if (!stream) {
-        responded = false
+      if (from === 'off') {
+        // From OFF only AUDIO: it joins her call, or calls her (not while the button is locked).
+        if (mode !== 'audio' || v.inCall || v.outgoing) return
+        if (v.incoming) {
+          responded = true
+          r.link.send({ t: 'callAccept' })
+        } else if (v.peerPaired && v.call.kind === 'ready') {
+          r.link.send({ t: 'call' })
+        } else return
+        state.missedCall = null
+        state.myMode = 'audio'
+        state.videoUnlockAt = deps.now() + VIDEO_UNLOCK_MS
         return
       }
-      if (rt !== r || !state.view?.incoming) {
-        // The friend gave up while we were asked for the mic.
-        stopStream(stream)
-        return
-      }
-      useMedia(stream, incoming.kind)
-      r.link.send({ t: 'callAccept' })
-    },
 
-    declineCall() {
-      if (!state.view?.incoming) return
-      responded = true
-      rt?.link.send({ t: 'callDecline' })
-    },
-
-    hangUp() {
-      rt?.link.send({ t: 'callEnd' })
-      endMedia()
-    },
-
-    setMic(on) {
-      const m = media
-      if (!m) return
-      for (const t of m.stream.getAudioTracks()) t.enabled = on
-      state.media.micOn = on
-    },
-
-    async setCamera(on) {
-      const m = media
-      if (!m) return
-      if (!on) {
-        // Stop the camera (its light goes off), not just mute it.
-        for (const t of m.stream.getVideoTracks()) {
-          t.stop()
-          m.stream.removeTrack(t)
-        }
-        state.media.camOn = false
-        if (m.attached) rt?.peer.setLocalStream(m.stream)
-        return
-      }
-      if (m.stream.getVideoTracks().some((t) => t.readyState === 'live')) {
-        for (const t of m.stream.getVideoTracks()) t.enabled = true
-        state.media.camOn = true
-        return
-      }
-      if (acquiring) return
-      acquiring = true
-      const cam = await acquire({ audio: false, video: VIDEO })
-      acquiring = false
-      if (!cam) return
-      const track = cam.getVideoTracks()[0]
-      if (media !== m || !track) {
-        stopStream(cam)
-        return
-      }
-      m.stream.addTrack(track)
-      state.media.camOn = true
-      if (m.attached) rt?.peer.setLocalStream(m.stream)
+      // AUDIO <-> VIDEO. VIDEO stays locked for a moment after OFF -> AUDIO (no mis-tap into video).
+      if (mode === 'video' && deps.now() < (state.videoUnlockAt ?? Infinity)) return
+      state.myMode = mode
+      sendMode()
+      await syncVideo()
     },
 
     dismissCallEnded() {

@@ -57,16 +57,14 @@ const groups: { title: string; items: Btn[] }[] = [
   {
     title: 'Звонки',
     items: [
-      { label: 'Входящий 📞', run: () => dev.incoming('voice') },
-      { label: 'Входящий 🎥', run: () => dev.incoming('video') },
-      { label: 'Она сбросила (пропущен)', run: () => dev.peerCancels() },
-      { label: 'Она ответила', run: () => dev.peerAccepts() },
-      { label: 'Она отклонила', run: () => dev.peerDeclines() },
-      { label: 'Не ответила', run: () => dev.ringTimeout() },
+      { label: 'Она звонит 📞', run: () => dev.incoming() },
+      { label: 'Она перестала звать (пропущен)', run: () => dev.peerCancels() },
+      { label: 'Она подключилась', run: () => dev.peerAccepts() },
+      { label: 'Не подключилась (минута)', run: () => dev.ringTimeout() },
       { label: 'Пропущенный из пуша', run: () => dev.missedFromPush() },
-      { label: 'Она положила трубку', run: () => dev.peerHangsUp() },
-      { label: 'Её камера вкл', run: () => dev.peerCamera(true) },
-      { label: 'Её камера выкл', run: () => dev.peerCamera(false) },
+      { label: 'Она: звук', run: () => dev.peerMode('audio') },
+      { label: 'Она: видео', run: () => dev.peerMode('video') },
+      { label: 'Она выключила (конец)', run: () => dev.peerHangsUp() },
     ],
   },
 ]
@@ -83,7 +81,7 @@ function run(b: Btn) {
   <van-popup v-model:show="open" position="right" :style="{ width: 'min(360px, 88vw)', height: '100%' }" class="dev-panel" data-test="dev-panel">
     <div class="dev-body">
       <div class="dev-state">
-        phase={{ s.phase }} · {{ s.connection }} · peer {{ s.view?.peerPresent ? 'here' : 'away' }} · call={{ s.view?.call.kind }} · ping={{ s.view?.ping.kind }} · push {{ dev.options.peerHasPush ? 'on' : 'off' }} · last ping={{ s.lastPing?.result ?? '-' }}
+        phase={{ s.phase }} · {{ s.connection }} · peer {{ s.view?.peerPresent ? 'here' : 'away' }} · me={{ s.myMode }} her={{ s.peerMode }} · call={{ s.view?.call.kind }} · ping={{ s.view?.ping.kind }} · push {{ dev.options.peerHasPush ? 'on' : 'off' }} · last ping={{ s.lastPing?.result ?? '-' }}
       </div>
       <section v-for="g in groups" :key="g.title" class="dev-group">
         <h3 class="dev-title">{{ g.title }}</h3>

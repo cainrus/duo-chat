@@ -48,22 +48,10 @@ export const themeVars: ConfigProviderThemeVars = {
   toastIconSize: '48px',
   badgeDotSize: '14px',
   countDownFontSize: '18px',
-  floatingBubbleSize: '72px',
-  floatingBubbleIconSize: '32px',
   actionSheetItemFontSize: '20px',
   tabsLineHeight: '56px',
   tabFontSize: '28px',
   cellFontSize: '18px',
   cellVerticalPadding: '14px',
   fieldInputTextColor: '#2B2440',
-}
-
-/** In-call screen only (local scope): dark backdrop, translucent buttons. */
-export const callVars: ConfigProviderThemeVars = {
-  popupBackground: '#15121F',
-  textColor: '#FFFFFF',
-  buttonDefaultBackground: 'rgba(255,255,255,.16)',
-  buttonDefaultColor: '#FFFFFF',
-  buttonDefaultBorderColor: 'transparent',
-  floatingBubbleSize: '120px',
 }

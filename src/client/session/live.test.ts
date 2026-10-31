@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MESSAGE_TTL_MS } from '@shared/constants'
+import { MESSAGE_TTL_MS, VIDEO_UNLOCK_MS } from '@shared/constants'
 import type { ClientToServer, PushSubscriptionJSONLike, RoomView, ServerToClient } from '@shared/protocol'
 import type { Side } from '@shared/types'
 import { derivePairKeys, generatePairSecret, secretFromHash } from '../crypto/pair'
@@ -58,6 +58,8 @@ class FakePeer implements PeerLinkLike {
   /** Frames handed to the data channel. */
   readonly out: DataFrame[] = []
   localStreams: (MediaStream | null)[] = []
+  /** Track kinds of each setLocalStream call, as they were at that moment. */
+  localKinds: string[][] = []
   /** When set, sendData fails after this many frames. */
   capacity = Infinity
   private dataCbs = new Set<(f: DataFrame) => void>()
@@ -86,6 +88,7 @@ class FakePeer implements PeerLinkLike {
   }
   setLocalStream(s: MediaStream | null) {
     this.localStreams.push(s)
+    this.localKinds.push(s ? s.getTracks().map((t) => t.kind) : [])
   }
   onRemoteStream(cb: (s: MediaStream | null) => void) {
     this.remoteCbs.add(cb)
@@ -171,9 +174,9 @@ const view = (over: Partial<RoomView> = {}): RoomView => ({
   peerPresent: true,
   call: { kind: 'ready' },
   ping: { kind: 'ready' },
-  incoming: null,
+  incoming: false,
   outgoing: null,
-  inCall: null,
+  inCall: false,
   ...over,
 })
 
@@ -745,7 +748,7 @@ describe('live session: messages', () => {
   })
 })
 
-describe('live session: calls', () => {
+describe('live session: call switch', () => {
   let config: DeviceConfig
   beforeEach(async () => {
     config = (await paired()).config
@@ -758,109 +761,183 @@ describe('live session: calls', () => {
     return h
   }
 
-  it('caller: media first, then the call; attached when connected; tracks stop when it ends', async () => {
+  /** The server reports the call connected; waits for the microphone. */
+  async function connected(h: Harness) {
+    h.link().deliver({ t: 'view', view: view({ inCall: true }) })
+    await flush()
+  }
+
+  const ended = (s: Stream) => s.getTracks().every((t) => t.readyState === 'ended')
+
+  it('caller: AUDIO calls; ringing opens no microphone; connected opens audio only; the end stops it and resets both switches', async () => {
     const h = await ready()
-    await h.session.startCall('video')
-    expect(h.media.constraints[0]).toMatchObject({ audio: expect.anything(), video: { facingMode: 'user' } })
-    expect(h.link().sentOf('call')).toEqual([{ t: 'call', kind: 'video' }])
+    await h.session.setMode('audio')
+    expect(h.link().sentOf('call')).toEqual([{ t: 'call' }])
+    expect(h.session.state.myMode).toBe('audio')
+    expect(h.session.state.videoUnlockAt).toBe(T0 + VIDEO_UNLOCK_MS)
+    h.link().deliver({ t: 'view', view: view({ outgoing: { until: T0 + 1 } }) })
+    await flush()
+    // No mic light while it only rings.
+    expect(h.media.constraints).toEqual([])
+    expect(h.session.state.media.local).toBeNull()
+    expect(h.session.state.peerMode).toBe('off')
+
+    await connected(h)
+    expect(h.media.constraints).toEqual([{ audio: expect.anything(), video: false }])
     const stream = h.media.streams[0]!
     expect(h.session.state.media.local).toBe(stream)
-    expect(h.session.state.media).toMatchObject({ micOn: true, camOn: true })
-    // Not sent to the friend before she accepts.
-    expect(h.peer().localStreams).toEqual([])
-
-    h.link().deliver({ t: 'view', view: view({ outgoing: { kind: 'video', until: T0 + 1 } }) })
-    h.link().deliver({ t: 'view', view: view({ inCall: { kind: 'video' } }) })
-    expect(h.peer().localStreams).toEqual([stream])
+    expect(h.session.state).toMatchObject({ myMode: 'audio', peerMode: 'audio' })
+    expect(h.session.state.media.videoOn).toBe(false)
+    expect(h.peer().localKinds).toEqual([['audio']])
 
     h.link().deliver({ t: 'callEnded', reason: 'hangup' })
-    expect(stream.getTracks().every((t) => t.readyState === 'ended')).toBe(true)
+    expect(ended(stream)).toBe(true)
     expect(h.peer().localStreams.at(-1)).toBeNull()
     expect(h.session.state.media.local).toBeNull()
+    expect(h.session.state).toMatchObject({ myMode: 'off', peerMode: 'off', videoUnlockAt: null })
     expect(h.session.state.lastCallEnded).toBe('hangup')
     h.session.dismissCallEnded()
     expect(h.session.state.lastCallEnded).toBeNull()
   })
 
-  it('voice call asks for audio only', async () => {
+  it('callee: her call shows her on AUDIO; our AUDIO joins without the mic; the mic opens once connected; OFF ends it', async () => {
     const h = await ready()
-    await h.session.startCall('voice')
-    expect(h.media.constraints[0]!.video).toBe(false)
-    expect(h.session.state.media.camOn).toBe(false)
-  })
-
-  it('callee: accept gets media and sends callAccept; hangUp stops tracks', async () => {
-    const h = await ready()
-    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'voice' } }) })
-    await h.session.acceptCall()
+    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
+    expect(h.session.state.peerMode).toBe('audio')
+    await h.session.setMode('audio')
     expect(h.link().sentOf('callAccept')).toHaveLength(1)
+    expect(h.link().sentOf('call')).toEqual([])
+    await flush()
+    expect(h.media.constraints).toEqual([])
+
+    await connected(h)
     const stream = h.media.streams[0]!
-    h.link().deliver({ t: 'view', view: view({ inCall: { kind: 'voice' } }) })
     expect(h.peer().localStreams).toEqual([stream])
     expect(h.session.state.missedCall).toBeNull()
 
-    h.session.hangUp()
+    await h.session.setMode('off')
     expect(h.link().sentOf('callEnd')).toHaveLength(1)
-    expect(stream.getTracks().every((t) => t.readyState === 'ended')).toBe(true)
+    expect(ended(stream)).toBe(true)
+    expect(h.session.state.myMode).toBe('off')
     h.link().deliver({ t: 'callEnded', reason: 'hangup' })
     h.link().deliver({ t: 'view', view: view() })
     expect(h.session.state.missedCall).toBeNull()
+    expect(h.session.state.peerMode).toBe('off')
   })
 
-  it('cancel stops the caller tracks', async () => {
+  it('her call that stops ringing puts her back to OFF', async () => {
     const h = await ready()
-    await h.session.startCall('voice')
-    h.session.cancelCall()
+    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
+    h.link().deliver({ t: 'callEnded', reason: 'timeout' })
+    h.link().deliver({ t: 'view', view: view() })
+    expect(h.session.state.peerMode).toBe('off')
+  })
+
+  it('OFF while ringing cancels; it never touched the mic', async () => {
+    const h = await ready()
+    await h.session.setMode('audio')
+    h.link().deliver({ t: 'view', view: view({ outgoing: { until: T0 + 1 } }) })
+    await h.session.setMode('off')
     expect(h.link().sentOf('callCancel')).toHaveLength(1)
-    expect(h.media.streams[0]!.getTracks()[0]!.readyState).toBe('ended')
+    expect(h.session.state.myMode).toBe('off')
+    expect(h.media.constraints).toEqual([])
   })
 
-  it('a refused call releases the mic', async () => {
+  it('our call that rings out unanswered puts our switch back to OFF', async () => {
     const h = await ready()
-    await h.session.startCall('voice')
+    await h.session.setMode('audio')
+    h.link().deliver({ t: 'view', view: view({ outgoing: { until: T0 + 1 } }) })
+    h.link().deliver({ t: 'callEnded', reason: 'timeout' })
+    h.link().deliver({ t: 'view', view: view({ call: { kind: 'ready' } }) })
+    expect(h.session.state).toMatchObject({ myMode: 'off', videoUnlockAt: null })
+  })
+
+  it('a refused call puts our switch back to OFF', async () => {
+    const h = await ready()
+    await h.session.setMode('audio')
     h.link().deliver({ t: 'error', code: 'not-allowed' })
-    expect(h.media.streams[0]!.getTracks()[0]!.readyState).toBe('ended')
+    expect(h.session.state.myMode).toBe('off')
     expect(h.session.state.error).toBeTruthy()
+  })
+
+  it('from OFF, VIDEO is not allowed', async () => {
+    const h = await ready()
+    await h.session.setMode('video')
+    expect(h.link().sentOf('call')).toEqual([])
+    expect(h.session.state.myMode).toBe('off')
+  })
+
+  it('VIDEO stays locked for VIDEO_UNLOCK_MS after OFF -> AUDIO', async () => {
+    const h = await ready()
+    await h.session.setMode('audio')
+    h.clock.now = T0 + VIDEO_UNLOCK_MS - 1
+    await h.session.setMode('video')
+    expect(h.session.state.myMode).toBe('audio')
+    h.clock.now = T0 + VIDEO_UNLOCK_MS
+    await h.session.setMode('video')
+    expect(h.session.state.myMode).toBe('video')
+  })
+
+  it('does not call while the button is locked, or before she has paired', async () => {
+    const h = await ready()
+    h.link().deliver({ t: 'view', view: view({ call: { kind: 'cooldown', until: T0 + 1 } }) })
+    await h.session.setMode('audio')
+    h.link().deliver({ t: 'view', view: view({ call: { kind: 'nobodyHome', until: T0 + 1 } }) })
+    await h.session.setMode('audio')
+    h.link().deliver({ t: 'view', view: view({ peerPaired: false }) })
+    await h.session.setMode('audio')
+    expect(h.link().sentOf('call')).toEqual([])
+    expect(h.session.state.myMode).toBe('off')
   })
 
   it('a call that ends without a callEnded frame (socket dropped) still stops tracks', async () => {
     const h = await ready()
-    await h.session.startCall('voice')
-    h.link().deliver({ t: 'view', view: view({ outgoing: { kind: 'voice', until: T0 + 1 } }) })
+    await connected(h)
     h.link().deliver({ t: 'view', view: view() })
-    expect(h.media.streams[0]!.getTracks()[0]!.readyState).toBe('ended')
+    expect(ended(h.media.streams[0]!)).toBe(true)
+    expect(h.session.state.media.local).toBeNull()
+    expect(h.session.state.myMode).toBe('off')
   })
 
-  it('does not start a call while the button is locked', async () => {
+  it('a call that ends while the mic is being opened releases it at once', async () => {
     const h = await ready()
-    h.link().deliver({ t: 'view', view: view({ call: { kind: 'cooldown', until: T0 + 1 } }) })
-    await h.session.startCall('voice')
-    expect(h.media.constraints).toEqual([])
-    expect(h.link().sentOf('call')).toEqual([])
+    h.link().deliver({ t: 'view', view: view({ inCall: true }) })
+    h.link().deliver({ t: 'view', view: view() })
+    await flush()
+    expect(ended(h.media.streams[0]!)).toBe(true)
+    expect(h.peer().localStreams).toEqual([])
+    expect(h.session.state.media.local).toBeNull()
   })
 
-  it('mic denied: a short Russian error and no call', async () => {
+  it('mic denied when the call connects: a short Russian error and the call ends cleanly', async () => {
     const h = await ready()
     h.media.fail = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
-    await h.session.startCall('voice')
+    await connected(h)
     expect(h.session.state.error).toMatch(/Нет доступа/)
-    expect(h.link().sentOf('call')).toEqual([])
+    expect(h.link().sentOf('callEnd')).toHaveLength(1)
+    expect(h.session.state.myMode).toBe('off')
+    expect(h.peer().localStreams).toEqual([])
+    // Another view of the same call does not ask again.
+    await connected(h)
+    expect(h.media.constraints).toHaveLength(1)
   })
 
   it('a media error clears once the mic works, and on dismiss', async () => {
     const h = await ready()
     h.media.fail = Object.assign(new Error('busy'), { name: 'NotReadableError' })
-    await h.session.startCall('voice')
+    await connected(h)
     expect(h.session.state.error).toMatch(/заняты/)
-    h.media.fail = null
-    await h.session.startCall('voice')
-    expect(h.link().sentOf('call')).toHaveLength(1)
-    expect(h.session.state.error).toBeNull()
-
-    h.session.hangUp()
-    h.media.fail = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    h.link().deliver({ t: 'callEnded', reason: 'hangup' })
     h.link().deliver({ t: 'view', view: view() })
-    await h.session.startCall('voice')
+
+    h.media.fail = null
+    await connected(h)
+    expect(h.session.state.error).toBeNull()
+    await h.session.setMode('off')
+    h.link().deliver({ t: 'view', view: view() })
+
+    h.media.fail = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    await connected(h)
     expect(h.session.state.error).toMatch(/Нет доступа/)
     h.session.dismissError()
     expect(h.session.state.error).toBeNull()
@@ -870,7 +947,8 @@ describe('live session: calls', () => {
     vi.useFakeTimers({ now: T0 })
     const h = await ready()
     h.media.fail = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
-    await h.session.startCall('voice')
+    h.link().deliver({ t: 'view', view: view({ inCall: true }) })
+    await vi.advanceTimersByTimeAsync(0)
     expect(h.session.state.error).toMatch(/Нет доступа/)
     vi.advanceTimersByTime(ERROR_TTL_MS - 1)
     expect(h.session.state.error).not.toBeNull()
@@ -878,33 +956,154 @@ describe('live session: calls', () => {
     expect(h.session.state.error).toBeNull()
   })
 
-  it('mic and camera toggles; camera in a voice call adds a video track', async () => {
-    const h = await ready()
-    await h.session.startCall('voice')
-    h.link().deliver({ t: 'view', view: view({ inCall: { kind: 'voice' } }) })
-    const stream = h.media.streams[0]!
-    h.session.setMic(false)
-    expect(stream.getAudioTracks()[0]!.enabled).toBe(false)
-    expect(h.session.state.media.micOn).toBe(false)
-
-    await h.session.setCamera(true)
-    expect(h.media.constraints[1]).toMatchObject({ audio: false, video: { facingMode: 'user' } })
-    expect(stream.getVideoTracks()).toHaveLength(1)
-    expect(h.session.state.media.camOn).toBe(true)
-    expect(h.peer().localStreams.at(-1)).toBe(stream)
-
-    const cam = stream.getVideoTracks()[0]!
-    await h.session.setCamera(false)
-    expect(cam.readyState).toBe('ended')
-    expect(stream.getVideoTracks()).toHaveLength(0)
-    expect(h.session.state.media.camOn).toBe(false)
-  })
-
   it('remote stream goes to state', async () => {
     const h = await ready()
     const remote = new Stream([new Track('audio')]) as unknown as MediaStream
     h.peer().remote(remote)
     expect(h.session.state.media.remote).toBe(remote)
+  })
+})
+
+describe('live session: video needs both switches on VIDEO', () => {
+  let config: DeviceConfig
+  beforeEach(async () => {
+    config = (await paired()).config
+  })
+
+  /** Joined her call (so VIDEO unlocks after VIDEO_UNLOCK_MS), channel open, connected. */
+  async function inCall() {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view() })
+    h.peer().setOpen(true)
+    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
+    await h.session.setMode('audio')
+    h.link().deliver({ t: 'view', view: view({ inCall: true }) })
+    await flush()
+    h.clock.now = T0 + VIDEO_UNLOCK_MS
+    return h
+  }
+
+  const modeFrames = (h: Harness) => h.peer().out.filter((f) => f.t === 'mode')
+
+  it('only ours on VIDEO: she is told, the camera stays closed, the call stays voice', async () => {
+    const h = await inCall()
+    await h.session.setMode('video')
+    expect(modeFrames(h).at(-1)).toEqual({ t: 'mode', mode: 'video' })
+    expect(h.media.constraints).toHaveLength(1) // the mic only
+    expect(h.session.state).toMatchObject({ myMode: 'video', peerMode: 'audio' })
+    expect(h.session.state.media.videoOn).toBe(false)
+    expect(h.peer().localKinds.at(-1)).toEqual(['audio'])
+  })
+
+  it('only hers on VIDEO: the camera stays closed too', async () => {
+    const h = await inCall()
+    h.peer().receive({ t: 'mode', mode: 'video' })
+    await flush()
+    expect(h.session.state).toMatchObject({ myMode: 'audio', peerMode: 'video' })
+    expect(h.session.state.media.videoOn).toBe(false)
+    expect(h.media.constraints).toHaveLength(1)
+  })
+
+  it('both on VIDEO: the camera opens and the track is added; either back to AUDIO: it stops and is removed', async () => {
+    const h = await inCall()
+    const stream = h.media.streams[0]!
+    await h.session.setMode('video')
+    h.peer().receive({ t: 'mode', mode: 'video' })
+    await flush()
+    expect(h.media.constraints[1]).toMatchObject({ audio: false, video: { facingMode: 'user' } })
+    expect(stream.getVideoTracks()).toHaveLength(1)
+    expect(h.peer().localKinds.at(-1)).toEqual(['audio', 'video'])
+    expect(h.session.state.media.videoOn).toBe(true)
+
+    // She goes back to AUDIO: our camera light goes off, voice again; our switch stays on VIDEO.
+    const cam = stream.getVideoTracks()[0]!
+    h.peer().receive({ t: 'mode', mode: 'audio' })
+    await flush()
+    expect(cam.readyState).toBe('ended')
+    expect(stream.getVideoTracks()).toHaveLength(0)
+    expect(h.peer().localKinds.at(-1)).toEqual(['audio'])
+    expect(h.session.state).toMatchObject({ myMode: 'video', peerMode: 'audio' })
+    expect(h.session.state.media.videoOn).toBe(false)
+
+    // VIDEO again, then we go back to AUDIO.
+    h.peer().receive({ t: 'mode', mode: 'video' })
+    await flush()
+    expect(h.session.state.media.videoOn).toBe(true)
+    const cam2 = stream.getVideoTracks()[0]!
+    await h.session.setMode('audio')
+    expect(modeFrames(h).at(-1)).toEqual({ t: 'mode', mode: 'audio' })
+    expect(cam2.readyState).toBe('ended')
+    expect(stream.getVideoTracks()).toHaveLength(0)
+    expect(h.session.state.media.videoOn).toBe(false)
+    expect(h.link().sentOf('callEnd')).toEqual([]) // still in the call
+  })
+
+  it('OFF from VIDEO ends everything: callEnd, camera and mic stopped', async () => {
+    const h = await inCall()
+    const stream = h.media.streams[0]!
+    await h.session.setMode('video')
+    h.peer().receive({ t: 'mode', mode: 'video' })
+    await flush()
+    await h.session.setMode('off')
+    expect(h.link().sentOf('callEnd')).toHaveLength(1)
+    expect(stream.getTracks().every((t) => t.readyState === 'ended')).toBe(true)
+    expect(h.session.state.media).toMatchObject({ local: null, videoOn: false })
+    expect(h.session.state.myMode).toBe('off')
+  })
+
+  it('a camera that is turned away while it is still opening is released, not added', async () => {
+    const h = await inCall()
+    h.peer().receive({ t: 'mode', mode: 'video' })
+    const turningOn = h.session.setMode('video')
+    h.peer().receive({ t: 'mode', mode: 'audio' })
+    await turningOn
+    await flush()
+    const cam = h.media.streams[1]!
+    expect(cam.getTracks().every((t) => t.readyState === 'ended')).toBe(true)
+    expect(h.media.streams[0]!.getVideoTracks()).toHaveLength(0)
+    expect(h.session.state.media.videoOn).toBe(false)
+  })
+
+  it('camera denied: an error, and our switch steps back to AUDIO', async () => {
+    const h = await inCall()
+    h.peer().receive({ t: 'mode', mode: 'video' })
+    h.media.fail = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    await h.session.setMode('video')
+    expect(h.session.state.error).toMatch(/Нет доступа/)
+    expect(h.session.state.myMode).toBe('audio')
+    expect(modeFrames(h).at(-1)).toEqual({ t: 'mode', mode: 'audio' })
+  })
+
+  it('both switches reset to OFF when the call ends', async () => {
+    const h = await inCall()
+    await h.session.setMode('video')
+    h.peer().receive({ t: 'mode', mode: 'video' })
+    await flush()
+    const stream = h.media.streams[0]!
+    h.link().deliver({ t: 'callEnded', reason: 'hangup' })
+    expect(stream.getTracks().every((t) => t.readyState === 'ended')).toBe(true)
+    expect(h.session.state).toMatchObject({ myMode: 'off', peerMode: 'off', videoUnlockAt: null })
+    expect(h.session.state.media.videoOn).toBe(false)
+  })
+
+  it('sends our switch when the call connects and again when the data channel reopens', async () => {
+    const h = await inCall()
+    expect(modeFrames(h)).toEqual([{ t: 'mode', mode: 'audio' }])
+    await h.session.setMode('video')
+    h.peer().setOpen(false)
+    h.peer().setOpen(true)
+    expect(modeFrames(h).at(-1)).toEqual({ t: 'mode', mode: 'video' })
+  })
+
+  it('outside a call: no mode frames sent or taken', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.link().deliver({ t: 'view', view: view() })
+    h.peer().setOpen(true)
+    h.peer().receive({ t: 'mode', mode: 'video' })
+    expect(modeFrames(h)).toEqual([])
+    expect(h.session.state.peerMode).toBe('off')
   })
 })
 
@@ -917,55 +1116,54 @@ describe('live session: missed calls', () => {
   it('a ringing call the friend cancelled is missed; a new call clears it', async () => {
     h = harness({ config })
     await h.session.ready
-    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'video' } }) })
+    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
     h.clock.now = T0 + 7
     h.link().deliver({ t: 'callEnded', reason: 'cancelled' })
     h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toEqual({ kind: 'video', at: T0 + 7 })
-    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'voice' } }) })
+    expect(h.session.state.missedCall).toEqual({ at: T0 + 7 })
+    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
     expect(h.session.state.missedCall).toBeNull()
   })
 
-  it('a declined call is not missed', async () => {
+  it('a call that rang out without us joining is missed', async () => {
     h = harness({ config })
     await h.session.ready
-    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'voice' } }) })
-    h.session.declineCall()
-    expect(h.link().sentOf('callDecline')).toHaveLength(1)
-    h.link().deliver({ t: 'callEnded', reason: 'declined' })
+    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
+    h.clock.now = T0 + 60_000
+    h.link().deliver({ t: 'callEnded', reason: 'timeout' })
     h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toBeNull()
+    expect(h.session.state.missedCall).toEqual({ at: T0 + 60_000 })
   })
 
   it('opened from a call notification after the call is gone: missed', async () => {
-    h = harness({ config, search: `?from=call-push&kind=voice&at=${T0 - 5000}` })
+    h = harness({ config, search: `?from=call-push&at=${T0 - 5000}` })
     await h.session.ready
     h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toEqual({ kind: 'voice', at: T0 - 5000 })
+    expect(h.session.state.missedCall).toEqual({ at: T0 - 5000 })
     h.session.dismissMissedCall()
     expect(h.session.state.missedCall).toBeNull()
   })
 
   it('opened from a call notification while it still rings: not missed', async () => {
-    h = harness({ config, search: `?from=call-push&kind=voice&at=${T0}` })
+    h = harness({ config, search: `?from=call-push&at=${T0}` })
     await h.session.ready
-    h.link().deliver({ t: 'view', view: view({ incoming: { kind: 'voice' } }) })
+    h.link().deliver({ t: 'view', view: view({ incoming: true }) })
     expect(h.session.state.missedCall).toBeNull()
   })
 
   it('a notification click forwarded to an open window is checked on the next view', async () => {
     h = harness({ config })
     await h.session.ready
-    h.page.click(`/?from=call-push&kind=video&at=${T0}`)
+    h.page.click(`/?from=call-push&at=${T0}`)
     h.link().deliver({ t: 'view', view: view() })
-    expect(h.session.state.missedCall).toEqual({ kind: 'video', at: T0 })
+    expect(h.session.state.missedCall).toEqual({ at: T0 })
   })
 
   it('starting a call clears a missed call', async () => {
-    h = harness({ config, search: `?from=call-push&kind=voice&at=${T0}` })
+    h = harness({ config, search: `?from=call-push&at=${T0}` })
     await h.session.ready
     h.link().deliver({ t: 'view', view: view() })
-    await h.session.startCall('voice')
+    await h.session.setMode('audio')
     expect(h.session.state.missedCall).toBeNull()
   })
 })

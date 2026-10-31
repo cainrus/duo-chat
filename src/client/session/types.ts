@@ -3,7 +3,7 @@
 // sockets, WebRTC or crypto. A fake implementation (session/fake.ts) drives the UI in dev.
 
 import type { CallEndReason, PingResult, RoomView } from '@shared/protocol'
-import type { CallKind, Side } from '@shared/types'
+import type { Side } from '@shared/types'
 import type { ChatMessage } from '../messages/store'
 
 export const AVATARS = ['cat', 'fox', 'bunny', 'bear', 'panda', 'owl', 'unicorn', 'frog'] as const
@@ -13,6 +13,14 @@ export type AvatarId = (typeof AVATARS)[number]
 export type Profile = { name: string; avatar: AvatarId }
 
 export type Connection = 'offline' | 'connecting' | 'online'
+
+/**
+ * One call switch per side: OFF | AUDIO | VIDEO. Each side sets only its own; what the two get
+ * is the lower of both (video needs both on VIDEO). AUDIO while the friend is OFF calls her;
+ * AUDIO while she calls joins. OFF from a ringing or connected call ends it for both.
+ */
+export type CallMode = 'off' | 'audio' | 'video'
+export const CALL_MODES: readonly CallMode[] = ['off', 'audio', 'video']
 
 export type DuoState = {
   /** 'setup' until this device is paired. */
@@ -24,7 +32,7 @@ export type DuoState = {
    * or the app was opened from a call notification after the call was gone).
    * Cleared by dismissMissedCall() or when a new call starts.
    */
-  missedCall: { kind: CallKind; at: number } | null
+  missedCall: { at: number } | null
   connection: Connection
   me: Profile | null
   /** Learned from the peer over the data channel; null until first contact. */
@@ -45,11 +53,24 @@ export type DuoState = {
    * short toast when `at` changes.
    */
   lastPing: { result: PingResult; at: number } | null
+  /** This side's call switch. Back to 'off' whenever the call ends. */
+  myMode: CallMode
+  /**
+   * The friend's call switch: from the server while it rings ('audio' = she is calling us),
+   * then from her device over the data channel once connected (never through the server).
+   */
+  peerMode: CallMode
+  /** VIDEO on our switch stays locked until this time (VIDEO_UNLOCK_MS after OFF -> AUDIO). */
+  videoUnlockAt: number | null
+  /**
+   * Media of the connected call. The microphone opens only once the call is connected (both
+   * on AUDIO or VIDEO); the camera only while both are on VIDEO.
+   */
   media: {
     local: MediaStream | null
     remote: MediaStream | null
-    micOn: boolean
-    camOn: boolean
+    /** Both switches are on VIDEO and our camera is running. */
+    videoOn: boolean
   }
   /** Why the last call ended; the UI shows a short note, then calls dismissCallEnded(). */
   lastCallEnded: CallEndReason | null
@@ -75,15 +96,13 @@ export interface DuoSession {
   /** "Come to the chat". Never disabled; the server decides nudge / push / silent. */
   ping(): void
 
-  // --- calls ---
-  startCall(kind: CallKind): Promise<void>
-  cancelCall(): void
-  acceptCall(): Promise<void>
-  declineCall(): void
-  hangUp(): void
-  setMic(on: boolean): void
-  /** Turns the camera on/off during a call (voice calls can add video). */
-  setCamera(on: boolean): Promise<void>
+  // --- calls: one switch (there is no decline: a call nobody joins rings out) ---
+  /**
+   * Moves our call switch. From OFF only AUDIO is allowed (it calls, or joins her call; not
+   * while the call button is locked). VIDEO only from AUDIO and after videoUnlockAt.
+   * OFF ends a ringing or connected call for both. Disallowed moves are ignored.
+   */
+  setMode(mode: CallMode): Promise<void>
 
   // --- clearing one-shot notes (the UI never writes into state) ---
   dismissCallEnded(): void

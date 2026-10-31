@@ -1,29 +1,26 @@
 <script setup lang="ts">
-// Home screen: the friend, the conversation, the input with a big emoji keyboard, and the
-// three big buttons (ping, voice, video). Every button state comes from the server's view.
+// The only screen after setup: the friend, the call bar (call switch + ping), the video while
+// both switches are on VIDEO, the conversation and the input with a big emoji keyboard.
+// Calls happen right here; the chat stays usable during them.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import type { PingResult } from '@shared/protocol'
-import type { CallKind } from '@shared/types'
 import { MAX_MESSAGE_LENGTH } from '../../messages/store'
 import { useDuo } from '../useDuo'
 import { playDing } from '../sound'
 import DuoAvatar from '../components/DuoAvatar.vue'
 import ChatBubble from '../components/ChatBubble.vue'
 import EmojiKeyboard from '../components/EmojiKeyboard.vue'
-import CallButton from '../components/CallButton.vue'
-import PingButton from '../components/PingButton.vue'
+import CallBar from '../components/CallBar.vue'
+import CallVideo from '../components/CallVideo.vue'
 import IconSmiley from '~icons/ph/smiley-fill'
 import IconSend from '~icons/ph/paper-plane-right-fill'
 import IconPhoneMissed from '~icons/ph/phone-incoming-fill'
 import IconOffline from '~icons/ph/wifi-slash-bold'
 import IconX from '~icons/ph/x-bold'
 
-/** Vant's floating bubble sits at z-index 999; the error bar goes above it. */
-const ERROR_BAR_STYLE = { position: 'relative', zIndex: 1000 } as const
-
-defineProps<{ missedCall: CallKind | null }>()
-const emit = defineEmits<{ callBack: [kind: CallKind]; dismissMissed: [] }>()
+defineProps<{ missedCall: boolean }>()
+const emit = defineEmits<{ callBack: []; dismissMissed: [] }>()
 
 const duo = useDuo()
 const s = duo.state
@@ -35,7 +32,6 @@ const shaking = ref(false)
 
 const view = computed(() => s.view)
 const present = computed(() => !!view.value?.peerPresent)
-const busy = computed(() => !view.value?.peerPaired || !!view.value?.outgoing || !!view.value?.inCall || !!view.value?.incoming)
 const pending = computed(() => new Set(s.pendingIds))
 const peerName = computed(() => s.peer?.name ?? (view.value?.peerPaired ? 'Подружка' : 'Ждём подружку'))
 
@@ -109,14 +105,15 @@ watch(
       <DuoAvatar :avatar="s.me?.avatar" :size="40" class="head-me" />
     </header>
 
-    <!-- Above the floating "back to call" bubble (z-index 999), so its × stays tappable. -->
+    <CallBar v-if="view" @ping="duo.ping()" />
+    <CallVideo v-if="s.media.videoOn" />
+
     <van-notice-bar
       v-if="s.error"
       :text="s.error"
       wrapable
       color="var(--van-danger-color)"
       background="#FDECEF"
-      :style="ERROR_BAR_STYLE"
       data-test="error"
     >
       <!-- A real button (Vant's closeable × is a bare icon a screen reader cannot name). -->
@@ -136,7 +133,7 @@ watch(
       <div v-if="missedCall" class="missed" data-test="missed-call">
         <IconPhoneMissed class="missed-icon" />
         <span class="missed-text">Звонила {{ s.peer?.name ?? 'подружка' }}</span>
-        <van-button round type="success" class="missed-btn" @click="emit('callBack', missedCall)">Перезвонить</van-button>
+        <van-button round type="success" class="missed-btn" :disabled="view?.call.kind !== 'ready'" @click="emit('callBack')">Перезвонить</van-button>
         <van-button round class="missed-close" aria-label="Закрыть" @click="emit('dismissMissed')">
           <IconX class="missed-x" />
         </van-button>
@@ -163,17 +160,6 @@ watch(
       </div>
 
       <EmojiKeyboard v-if="emojiOpen" @pick="pickEmoji" />
-      <van-grid v-else :column-num="3" :border="false" class="actions">
-        <van-grid-item>
-          <PingButton v-if="view" :view="view.ping" @press="duo.ping()" />
-        </van-grid-item>
-        <van-grid-item>
-          <CallButton v-if="view" kind="voice" :view="view.call" :busy="busy" @press="duo.startCall($event)" />
-        </van-grid-item>
-        <van-grid-item>
-          <CallButton v-if="view" kind="video" :view="view.call" :busy="busy" @press="duo.startCall($event)" />
-        </van-grid-item>
-      </van-grid>
     </footer>
 
   </div>
@@ -267,7 +253,7 @@ watch(
   height: 22px;
 }
 .chat-foot {
-  padding: 8px 12px 0;
+  padding: 8px 12px;
   background: var(--van-background);
 }
 .input-row {
@@ -298,13 +284,6 @@ watch(
 .input :deep(textarea) {
   max-height: 120px;
   user-select: text;
-}
-.actions {
-  padding: 4px 0;
-}
-.actions :deep(.van-grid-item__content) {
-  background: transparent;
-  padding: 8px 4px;
 }
 .nudge {
   animation: nudge 0.5s ease-in-out 3;

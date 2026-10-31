@@ -6,12 +6,19 @@
 import type { Side } from '@shared/types'
 import { otherSide } from '@shared/types'
 import type { ChatMessage } from '../messages/store'
-import type { Profile } from '../session/types'
+import { CALL_MODES, type CallMode, type Profile } from '../session/types'
 import type { ServerLink } from '../net/serverLink'
 import { open, seal } from '../crypto/pair'
 
-/** Frames on the data channel (JSON). `ack` confirms which message ids arrived. */
-export type DataFrame = { t: 'msg'; m: ChatMessage } | { t: 'profile'; p: Profile } | { t: 'ack'; ids: string[] }
+/**
+ * Frames on the data channel (JSON). `ack` confirms which message ids arrived; `mode` is this
+ * side's call switch during a call (video runs only while both are on VIDEO).
+ */
+export type DataFrame =
+  | { t: 'msg'; m: ChatMessage }
+  | { t: 'profile'; p: Profile }
+  | { t: 'ack'; ids: string[] }
+  | { t: 'mode'; mode: CallMode }
 
 /** Inside the sealed envelope. */
 export type SignalPayload =
@@ -554,5 +561,6 @@ function parseFrame(data: unknown): DataFrame | null {
   if (value.t === 'ack' && Array.isArray(value.ids) && value.ids.every((id) => typeof id === 'string')) {
     return { t: 'ack', ids: value.ids as string[] }
   }
+  if (value.t === 'mode' && CALL_MODES.includes(value.mode as CallMode)) return { t: 'mode', mode: value.mode as CallMode }
   return null
 }
