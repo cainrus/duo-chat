@@ -1,5 +1,7 @@
 // Worker entry: HTTP routes under /api, everything else is static assets (the PWA).
-// Routes are listed in src/shared/protocol.ts. Implemented by the server task.
+// Routes are listed in src/shared/protocol.ts and implemented in ./routes.ts.
+
+import { handleApi } from './routes'
 
 export type Env = {
   ROOMS: DurableObjectNamespace
@@ -15,7 +17,7 @@ export type Env = {
 export { PairRoom } from './room/durable'
 
 export default {
-  async fetch(_request: Request, _env: Env): Promise<Response> {
-    return new Response('not implemented', { status: 501 })
+  async fetch(request: Request, env: Env): Promise<Response> {
+    return (await handleApi(request, env)) ?? env.ASSETS.fetch(request)
   },
 } satisfies ExportedHandler<Env>

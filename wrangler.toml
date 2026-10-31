@@ -2,6 +2,9 @@ name = "duo-chat"
 main = "src/server/worker.ts"
 compatibility_date = "2026-10-01"
 
+# Bundle with the worker tsconfig so the @shared/@server path aliases resolve.
+tsconfig = "tsconfig.worker.json"
+
 # The built PWA is served by the same Worker (static assets), so the app and the API share an origin.
 [assets]
 directory = "./dist"
