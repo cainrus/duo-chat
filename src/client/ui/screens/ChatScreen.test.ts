@@ -141,10 +141,13 @@ describe('ChatScreen', () => {
     const kb = wrapper.get('[data-test="emoji-keyboard"]')
     // The sticker tabs come first; the faces tab is the first emoji one.
     await kb.get('[aria-label="Лица"]').trigger('click')
-    // Vant renders a newly chosen pane on a later tick.
-    await new Promise((r) => setTimeout(r, 0))
-    await nextTick()
-    await kb.findAll('.van-grid-item').find((i) => i.text() === '😀')!.trigger('click')
+    // Vant renders a newly chosen pane a few ticks later (slower on CI), so wait for it.
+    const smile = await vi.waitFor(() => {
+      const item = kb.findAll('.van-grid-item').find((i) => i.text() === '😀')
+      if (!item) throw new Error('faces pane not rendered yet')
+      return item
+    })
+    await smile.trigger('click')
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('😀')
   })
 
