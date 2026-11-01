@@ -193,7 +193,7 @@ function squash(m: Mood): string {
 
 /** One animated sticker. With `signs: false` the sparkles, hearts etc. around the spy are left out. */
 export function spySvg(m: Mood, opts: { signs?: boolean } = {}): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -30 520 520">` + defs +
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-24 -34 540 540">` + defs +
     `<g transform="translate(240 560)"><g>${squash(m)}<g transform="translate(-240 -560)">` +
     coatBack +
     `<g transform="translate(0 40)"><g>${headMotion(m)}${face(m)}${glasses(m)}${hat(m)}</g></g>` +
