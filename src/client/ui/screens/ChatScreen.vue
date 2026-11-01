@@ -1,12 +1,15 @@
 <script setup lang="ts">
-// The only screen after setup: is the friend here, the call bar (call switch + ping), the video while
-// both switches are on VIDEO, the conversation and the input with a big emoji keyboard.
+// The only screen after setup: the friend's picture (the shared spy), the call bar (call switch +
+// ping), the video while both switches are on VIDEO (the spy, large, during a voice call), the
+// conversation and the input with a big emoji and sticker keyboard.
 // Calls happen right here; the chat stays usable during them.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { MAX_MESSAGE_LENGTH } from '../../messages/store'
+import { SPY_AVATAR_SRC, type StickerId } from '../../stickers/catalog'
 import { hhmm } from '../format'
 import { useDuo } from '../useDuo'
 import ChatBubble from '../components/ChatBubble.vue'
+import ChatSticker from '../components/ChatSticker.vue'
 import EmojiKeyboard from '../components/EmojiKeyboard.vue'
 import CallBar from '../components/CallBar.vue'
 import CallVideo from '../components/CallVideo.vue'
@@ -30,6 +33,11 @@ function send() {
   if (!t) return
   duo.sendText(t)
   text.value = ''
+}
+
+/** A sticker goes out at once (an emoji goes into the text field instead). */
+function sendSticker(id: StickerId) {
+  duo.sendSticker(id)
 }
 
 function pickEmoji(e: string) {
@@ -63,7 +71,11 @@ function toggleBell() {
 <template>
   <div class="chat van-safe-area-top">
     <header class="chat-head">
-      <!-- No names, pictures or presence (owner): nothing tells whether the friend is in the app. -->
+      <!--
+        No names or presence (owner): nothing tells whether the friend is in the app. The picture
+        is the one spy both kids share (owner, 2026-11-01), still, so the header stays calm.
+      -->
+      <img class="head-avatar" :src="SPY_AVATAR_SRC" alt="" width="44" height="44" draggable="false" data-test="avatar" />
       <div class="head-title">
         <span v-if="view && !view.peerPaired" class="head-wait" data-test="not-paired">ещё не подключилась</span>
       </div>
@@ -82,6 +94,10 @@ function toggleBell() {
 
     <CallBar v-if="view" @ping="duo.ping()" />
     <CallVideo v-if="s.media.videoOn" />
+    <!-- A voice call without video: the friend's picture, large and still. -->
+    <div v-else-if="view?.inCall" class="call-avatar" data-test="call-avatar">
+      <img :src="SPY_AVATAR_SRC" alt="" width="132" height="132" draggable="false" />
+    </div>
 
     <van-notice-bar
       v-if="s.error"
@@ -104,6 +120,7 @@ function toggleBell() {
       <template v-for="m in s.messages" :key="m.id">
         <!-- Someone waited in the voice room and left before the other joined: the same line on both sides. -->
         <div v-if="m.kind === 'voice'" class="service" data-test="voice-item">📞 голосовой · {{ hhmm(m.sentAt) }}</div>
+        <ChatSticker v-else-if="m.kind === 'sticker'" :id="m.text" :mine="m.from === s.self" :pending="pending.has(m.id)" />
         <ChatBubble v-else :text="m.text" :mine="m.from === s.self" :pending="pending.has(m.id)" />
       </template>
     </main>
@@ -130,7 +147,7 @@ function toggleBell() {
         </van-button>
       </div>
 
-      <EmojiKeyboard v-if="emojiOpen" @pick="pickEmoji" />
+      <EmojiKeyboard v-if="emojiOpen" @pick="pickEmoji" @sticker="sendSticker" />
     </footer>
 
   </div>
@@ -149,6 +166,27 @@ function toggleBell() {
   align-items: center;
   gap: 14px;
   padding: 12px 16px;
+}
+.head-avatar {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--van-background-2);
+}
+.call-avatar {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  margin: 0 16px 8px;
+  padding: 8px 0;
+  border-radius: var(--van-radius-lg);
+  background: var(--van-background-2);
+}
+.call-avatar img {
+  display: block;
+  width: 132px;
+  height: 132px;
 }
 .head-title {
   flex: 1;

@@ -50,6 +50,9 @@ export default defineConfig({
       filename: 'sw.ts',
       injectRegister: false,
       manifest: false, // public/manifest.webmanifest is used as is
+      // `svg` precaches the spy (avatar + 8 stickers, ~60 KB), so the friend's picture is there
+      // offline. The Noto stickers (.webp, ~2.3 MB) are left out on purpose: they load the first
+      // time the sticker tab or a message shows them, and the browser's HTTP cache keeps them.
       injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,webmanifest,woff2}'] },
     }),
     versionManifest(),

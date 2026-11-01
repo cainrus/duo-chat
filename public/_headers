@@ -12,3 +12,7 @@
 
 /version.json
   Cache-Control: no-cache
+
+# Stickers are not content-hashed; a week is short enough for a regenerated file to arrive.
+/stickers/*
+  Cache-Control: public, max-age=604800
