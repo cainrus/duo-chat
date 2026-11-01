@@ -20,7 +20,8 @@ import { idbPersistence } from '../messages/idbPersistence'
 import { MessageStore, MAX_MESSAGE_LENGTH, type MessagePersistence } from '../messages/store'
 import { connectServerLink, type LinkStatus, type ServerLink } from '../net/serverLink'
 import { NOTIFICATION_TAG } from '../push/notification'
-import { currentSubscription, notificationsGranted, requestNotifications } from '../push/subscribe'
+import { currentSubscription, requestNotifications } from '../push/subscribe'
+import { notificationSupport, type NotificationSupport } from '../push/support'
 import { PeerLink, type DataFrame } from '../rtc/peerLink'
 import type { CallMode, Connection, DuoSession, DuoState, NotificationResult } from './types'
 
@@ -64,8 +65,8 @@ export type LiveDeps = {
   push: {
     request(onSubscription: (sub: PushSubscriptionJSONLike) => void): Promise<NotificationResult>
     current(): Promise<PushSubscriptionJSONLike | null>
-    /** Notifications are allowed (permission granted, push supported). */
-    allowed(): boolean
+    /** Can notifications work here (support + permission), read fresh on every call. */
+    support(): NotificationSupport
   }
   now(): number
 }
@@ -119,6 +120,15 @@ export const ACK_RESEND_MS = 5_000
 
 const AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
 const VIDEO: MediaTrackConstraints = { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+
+/**
+ * The bell's state after asking: 'granted' only once subscribed. Permission given but the
+ * subscription failed (no service worker yet) reads as 'default', so the next tap tries again.
+ */
+function afterRequest(result: NotificationResult, now: NotificationSupport): NotificationSupport {
+  if (result === 'granted') return 'granted'
+  return now === 'granted' ? 'default' : now
+}
 
 // ---------- browser defaults ----------
 
@@ -175,7 +185,7 @@ function defaultDeps(opts: LiveOptions): LiveDeps {
     push: {
       request: (onSub) => requestNotifications({ apiBase, fetch: fetcher }, onSub),
       current: () => currentSubscription({ apiBase, fetch: fetcher }),
-      allowed: () => notificationsGranted(),
+      support: () => notificationSupport(),
     },
     now: () => Date.now(),
   }
@@ -207,7 +217,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
     pendingIds: [],
     directOpen: false,
     pushMuted: false,
-    notificationsAllowed: false,
+    notifications: deps.push.support(),
     myMode: 'off',
     peerMode: 'off',
     videoUnlockAt: null,
@@ -272,7 +282,11 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
           leftUnanswered()
         }
         rt?.link.setVisible(visible)
-        if (visible) page.closeNotifications()
+        if (visible) {
+          page.closeNotifications()
+          // The adult may have allowed or blocked notifications in the settings meanwhile.
+          state.notifications = deps.push.support()
+        }
         if (visible && rt) {
           // Timers may have slept with the page.
           rt.store.sweep()
@@ -630,7 +644,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
     state.self = config.side
     state.pushMuted = config.pushMuted ?? false
-    state.notificationsAllowed = deps.push.allowed()
+    state.notifications = deps.push.support()
     state.phase = 'ready'
     // The app is open: notifications on screen are old news.
     page?.closeNotifications()
@@ -761,7 +775,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
           pendingSub = sub
           rt?.link.send({ t: 'pushSubscribe', sub })
         })
-        if (result === 'granted') state.notificationsAllowed = true
+        state.notifications = afterRequest(result, deps.push.support())
         return result
       } catch (err) {
         console.debug('[live] notifications failed', err)
@@ -806,7 +820,7 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
 
     async setPushMuted(muted) {
       // Turning pushes on without permission asks first (this stays the first await of the tap).
-      if (!muted && !state.notificationsAllowed && (await session.enableNotifications()) !== 'granted') return
+      if (!muted && state.notifications !== 'granted' && (await session.enableNotifications()) !== 'granted') return
       state.pushMuted = muted
       const r = rt
       if (!r) return

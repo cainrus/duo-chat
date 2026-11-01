@@ -16,7 +16,10 @@ import CallVideo from '../components/CallVideo.vue'
 import IconSmiley from '~icons/ph/smiley-fill'
 import IconSend from '~icons/ph/paper-plane-right-fill'
 import IconOffline from '~icons/ph/wifi-slash-bold'
+import NotifyHelp from '../components/NotifyHelp.vue'
+import { isAppleTouch, isStandalone } from '../../push/support'
 import IconBell from '~icons/ph/bell-fill'
+import IconBellSlash from '~icons/ph/bell-slash-fill'
 
 const duo = useDuo()
 const s = duo.state
@@ -61,11 +64,17 @@ function scrollToEnd() {
 onMounted(scrollToEnd)
 watch([() => s.messages.length, emojiOpen, () => s.media.videoOn], scrollToEnd)
 
-// The notifications switch: pushes to this device on or off. Turning them on may ask for permission first.
-const bellOn = computed(() => s.notificationsAllowed && !s.pushMuted)
+// The notifications switch: pushes to this device on or off. Turning them on may ask for permission
+// first ('default'). Where they cannot work (iPad Safari tab, blocked, no support) a greyed bell
+// opens the help for the adult instead of a switch that would pretend.
+const switchable = computed(() => s.notifications === 'granted' || s.notifications === 'default')
+const bellOn = computed(() => s.notifications === 'granted' && !s.pushMuted)
 function toggleBell() {
   void duo.setPushMuted(bellOn.value)
 }
+const apple = isAppleTouch()
+const standalone = isStandalone()
+const helpOpen = ref(false)
 </script>
 
 <template>
@@ -81,7 +90,7 @@ function toggleBell() {
       </div>
       <IconOffline v-if="s.connection !== 'online'" class="head-offline" aria-label="Нет связи" />
       <!-- A standard toggle switch (owner: native-style controls); the bell only names it. -->
-      <div class="notify">
+      <div v-if="switchable" class="notify">
         <IconBell class="notify-icon" aria-hidden="true" />
         <van-switch
           :model-value="bellOn"
@@ -90,7 +99,20 @@ function toggleBell() {
           @update:model-value="toggleBell"
         />
       </div>
+      <!-- Cannot work here: grey, but a real button that explains how (adults read it, kids see grey). -->
+      <button
+        v-else
+        type="button"
+        class="notify-off"
+        aria-label="Уведомления не работают здесь. Как включить"
+        data-test="notifications-help"
+        :data-state="s.notifications"
+        @click="helpOpen = true"
+      >
+        <IconBellSlash class="notify-off-icon" aria-hidden="true" />
+      </button>
     </header>
+    <NotifyHelp v-model:show="helpOpen" :support="s.notifications" :apple="apple" :standalone="standalone" />
 
     <CallBar v-if="view" @ping="duo.ping()" />
     <CallVideo v-if="s.media.videoOn" />
@@ -211,6 +233,23 @@ function toggleBell() {
   width: 22px;
   height: 22px;
   color: var(--van-text-color-2);
+}
+.notify-off {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--van-radius-max);
+  background: var(--van-duo-track);
+  color: var(--van-text-color-3);
+  cursor: pointer;
+}
+.notify-off-icon {
+  width: 26px;
+  height: 26px;
 }
 .chat-list {
   flex: 1;

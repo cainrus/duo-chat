@@ -56,6 +56,16 @@ const groups: { title: string; items: Btn[] }[] = [
     ],
   },
   {
+    title: 'Уведомления',
+    items: [
+      { label: 'Разрешены', run: () => dev.setNotifications('granted') },
+      { label: 'Не спрашивали', run: () => dev.setNotifications('default') },
+      { label: 'Запрещены', run: () => dev.setNotifications('denied') },
+      { label: 'Вкладка iPad (установить)', run: () => dev.setNotifications('unsupported-install') },
+      { label: 'Не поддерживаются', run: () => dev.setNotifications('unsupported') },
+    ],
+  },
+  {
     title: 'Звонки',
     items: [
       { label: 'Она звонит 📞', run: () => dev.incoming() },
@@ -80,7 +90,7 @@ function run(b: Btn) {
   <van-popup v-model:show="open" position="right" :style="{ width: 'min(360px, 88vw)', height: '100%' }" class="dev-panel" data-test="dev-panel">
     <div class="dev-body">
       <div class="dev-state">
-        phase={{ s.phase }} · {{ s.connection }} · peer {{ s.view?.peerPresent ? 'here' : 'away' }} · me={{ s.myMode }} her={{ s.peerMode }} · call={{ s.view?.call.kind }} · ping={{ s.view?.ping.kind }} · bell {{ s.pushMuted ? 'off' : 'on' }}
+        phase={{ s.phase }} · {{ s.connection }} · peer {{ s.view?.peerPresent ? 'here' : 'away' }} · me={{ s.myMode }} her={{ s.peerMode }} · call={{ s.view?.call.kind }} · ping={{ s.view?.ping.kind }} · bell {{ s.pushMuted ? 'off' : 'on' }} · notify={{ s.notifications }}
       </div>
       <section v-for="g in groups" :key="g.title" class="dev-group">
         <h3 class="dev-title">{{ g.title }}</h3>

@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import ChatScreen from './ChatScreen.vue'
+import NotifyHelp from '../components/NotifyHelp.vue'
 import { mountWithDuo } from '../test/mountWithDuo'
 
 const bubbles = (w: { findAll: (s: string) => { text: () => string }[] }) =>
@@ -214,5 +216,79 @@ describe('ChatScreen', () => {
     session.dev.peerHangsUp()
     await nextTick()
     expect(wrapper.find('[data-test="call-avatar"]').exists()).toBe(false)
+  })
+})
+
+describe('ChatScreen: the notifications control knows where it runs', () => {
+  const IPAD_UA = 'Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+  afterEach(() => vi.restoreAllMocks())
+
+  const help = (w: { find: (s: string) => { exists: () => boolean; attributes: (n: string) => string | undefined } }) =>
+    w.find('[data-test="notify-help"]')
+
+  it("'default': the switch, off; turning it on asks for permission and then it is on", async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, {}, { notifications: 'default' })
+    const toggle = () => wrapper.get('[data-test="notifications"]')
+    expect(wrapper.find('[data-test="notifications-help"]').exists()).toBe(false)
+    expect(toggle().attributes('aria-checked')).toBe('false')
+    const ask = vi.spyOn(session, 'enableNotifications')
+    await toggle().trigger('click')
+    expect(ask).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(session.state.notifications).toBe('granted'))
+    await flushPromises()
+    expect(session.state.pushMuted).toBe(false)
+    expect(toggle().attributes('aria-checked')).toBe('true')
+  })
+
+  it("'granted': the switch, on", () => {
+    const { wrapper } = mountWithDuo(ChatScreen, {}, { notifications: 'granted' })
+    expect(wrapper.get('[data-test="notifications"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.find('[data-test="notifications-help"]').exists()).toBe(false)
+  })
+
+  it('iPad Safari tab: a greyed bell instead of the switch; it opens the install help with the storage note', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(IPAD_UA)
+    const { wrapper } = mountWithDuo(ChatScreen, {}, { notifications: 'unsupported-install' })
+    expect(wrapper.find('[data-test="notifications"]').exists()).toBe(false)
+    const bell = wrapper.get('[data-test="notifications-help"]')
+    expect(bell.element.tagName).toBe('BUTTON')
+    expect(bell.attributes('aria-label')).toMatch(/Как включить/)
+    expect(help(wrapper).exists()).toBe(false)
+    await bell.trigger('click')
+    await nextTick()
+    expect(help(wrapper).attributes('data-variant')).toBe('install')
+    expect(wrapper.get('[data-test="install-steps"]').attributes('data-platform')).toBe('apple')
+    expect(wrapper.get('[data-test="install-steps"]').text()).toContain('На экран «Домой»')
+    expect(wrapper.get('[data-test="storage-note"]').text()).toContain('пару придётся создать заново')
+    await wrapper.get('[data-test="notify-help-close"]').trigger('click')
+    await nextTick()
+    expect(wrapper.getComponent(NotifyHelp).props('show')).toBe(false)
+  })
+
+  it("'denied': a greyed bell opening the «allow in settings» help", async () => {
+    const { wrapper } = mountWithDuo(ChatScreen, {}, { notifications: 'denied' })
+    expect(wrapper.find('[data-test="notifications"]').exists()).toBe(false)
+    await wrapper.get('[data-test="notifications-help"]').trigger('click')
+    await nextTick()
+    expect(help(wrapper).attributes('data-variant')).toBe('denied')
+    expect(wrapper.get('[data-test="settings-hint"]').text()).toContain('Разрешить')
+    expect(wrapper.find('[data-test="storage-note"]').exists()).toBe(false)
+  })
+
+  it("'unsupported': a greyed bell; the help says this browser cannot, and suggests another or installing", async () => {
+    const { wrapper } = mountWithDuo(ChatScreen, {}, { notifications: 'unsupported' })
+    await wrapper.get('[data-test="notifications-help"]').trigger('click')
+    await nextTick()
+    expect(help(wrapper).attributes('data-variant')).toBe('unsupported')
+    expect(help(wrapper).exists()).toBe(true)
+    expect(wrapper.get('[data-test="notify-help"]').text()).toContain('Chrome')
+  })
+
+  it('the control follows the state live: allowed in the settings -> the switch comes back', async () => {
+    const { wrapper, session } = mountWithDuo(ChatScreen, {}, { notifications: 'denied' })
+    expect(wrapper.find('[data-test="notifications"]').exists()).toBe(false)
+    session.dev.setNotifications('granted')
+    await nextTick()
+    expect(wrapper.get('[data-test="notifications"]').attributes('aria-checked')).toBe('true')
   })
 })

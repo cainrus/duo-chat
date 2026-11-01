@@ -8,7 +8,7 @@ import type { MessagePersistence, StoredMessage } from '../messages/store'
 import type { LinkStatus, ServerLink } from '../net/serverLink'
 import type { DataFrame } from '../rtc/peerLink'
 import { ACK_RESEND_MS, createLiveSession, DIRECT_RETRY_MS, ERROR_TTL_MS, type LiveDeps, type LiveSession, type PageEnv, type PeerLinkLike } from './live'
-import type { NotificationResult } from './types'
+import type { NotificationResult, NotificationSupport } from './types'
 
 // ---------- fakes ----------
 
@@ -193,7 +193,7 @@ type Harness = {
     /** How many times the session closed the shown notifications. */
     closed: number
   }
-  push: { subs: PushSubscriptionJSONLike[]; allowed: boolean; result: NotificationResult }
+  push: { subs: PushSubscriptionJSONLike[]; support: NotificationSupport; result: NotificationResult }
   clock: { now: number }
   link: () => FakeLink
   peer: () => FakePeer
@@ -248,7 +248,7 @@ function harness(opts: {
       pageState.closed++
     },
   }
-  const push = { subs: [] as PushSubscriptionJSONLike[], allowed: false, result: 'granted' as NotificationResult }
+  const push = { subs: [] as PushSubscriptionJSONLike[], support: 'default' as NotificationSupport, result: 'granted' as NotificationResult }
   const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     fetchCalls.push({ url, init })
@@ -298,7 +298,7 @@ function harness(opts: {
         return 'granted'
       },
       current: async () => opts.currentSub ?? null,
-      allowed: () => push.allowed,
+      support: () => push.support,
     },
     now: () => clock.now,
   }
@@ -532,9 +532,9 @@ describe('live session: server link', () => {
 
   it('the bell: muting is sent, saved on the device and re-sent on every connect', async () => {
     h = harness({ config })
-    h.push.allowed = true
+    h.push.support = 'granted'
     await h.session.ready
-    expect(h.session.state).toMatchObject({ pushMuted: false, notificationsAllowed: true })
+    expect(h.session.state).toMatchObject({ pushMuted: false, notifications: 'granted' })
     h.link().setStatus('open')
     expect(h.link().sentOf('pushMute')).toEqual([{ t: 'pushMute', muted: false }])
     await h.session.setPushMuted(true)
@@ -557,15 +557,50 @@ describe('live session: server link', () => {
   it('the bell: turning pushes on without permission asks first, and stays off if refused', async () => {
     h = harness({ config: { ...config, pushMuted: true } })
     await h.session.ready
-    expect(h.session.state.notificationsAllowed).toBe(false)
+    expect(h.session.state.notifications).toBe('default')
     h.push.result = 'denied'
     await h.session.setPushMuted(false)
     expect(h.session.state.pushMuted).toBe(true)
     h.push.result = 'granted'
     await h.session.setPushMuted(false)
-    expect(h.session.state).toMatchObject({ pushMuted: false, notificationsAllowed: true })
+    expect(h.session.state).toMatchObject({ pushMuted: false, notifications: 'granted' })
     expect(h.link().sentOf('pushSubscribe')).toHaveLength(1)
     expect(h.link().sentOf('pushMute').at(-1)).toEqual({ t: 'pushMute', muted: false })
+  })
+
+  it('notification support is read again whenever the page is shown (settings may have changed)', async () => {
+    h = harness({ config })
+    h.push.support = 'denied'
+    await h.session.ready
+    expect(h.session.state.notifications).toBe('denied')
+    h.push.support = 'granted'
+    h.page.emit(false)
+    expect(h.session.state.notifications).toBe('denied')
+    h.page.emit(true)
+    expect(h.session.state.notifications).toBe('granted')
+  })
+
+  it('after asking: a refusal shows what the browser says; permission without a subscription retries', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.push.result = 'denied'
+    h.push.support = 'denied'
+    expect(await h.session.enableNotifications()).toBe('denied')
+    expect(h.session.state.notifications).toBe('denied')
+    // Allowed, but the subscription failed (no service worker yet): the switch stays off, the next tap retries.
+    h.push.result = 'unsupported'
+    h.push.support = 'granted'
+    expect(await h.session.enableNotifications()).toBe('unsupported')
+    expect(h.session.state.notifications).toBe('default')
+  })
+
+  it('the setup screen knows the support before pairing', async () => {
+    h = harness()
+    await h.session.ready
+    expect(h.session.state).toMatchObject({ phase: 'setup', notifications: 'default' })
+    h.push.support = 'unsupported-install'
+    h.page.emit(true)
+    expect(h.session.state.notifications).toBe('unsupported-install')
   })
 
   it('a subscription made before pairing is sent once the link exists', async () => {

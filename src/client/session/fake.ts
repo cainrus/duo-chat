@@ -16,7 +16,7 @@ import {
 } from '@shared/constants'
 import { MAX_MESSAGE_LENGTH, type ChatMessage } from '../messages/store'
 import { isStickerId, NOTO_STICKERS, SPY_STICKERS, type StickerId } from '../stickers/catalog'
-import type { CallMode, Connection, DuoSession, DuoState, NotificationResult } from './types'
+import type { CallMode, Connection, DuoSession, DuoState, NotificationResult, NotificationSupport } from './types'
 
 export type FakeOptions = {
   /** Start already paired, with a friend and a few messages (default), or on the setup screen. */
@@ -25,6 +25,8 @@ export type FakeOptions = {
   autoReply?: boolean
   /** Artificial latency of async actions, ms. */
   latency?: number
+  /** Can notifications work here (default 'granted'). */
+  notifications?: NotificationSupport
   now?: () => number
 }
 
@@ -53,6 +55,8 @@ export type FakeDev = {
   setCallView(kind: 'ready' | 'cooldown' | 'nobodyHome'): void
   setPingView(kind: 'ready' | 'cooldown' | 'exhausted'): void
   setError(text: string | null): void
+  /** What the browser says about notifications: plain tab on iPad, never asked, allowed, blocked... */
+  setNotifications(support: NotificationSupport): void
   /** The app was opened from a call notification after the call was already gone. */
 }
 
@@ -83,7 +87,7 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     pendingIds: [],
     directOpen: false,
     pushMuted: false,
-    notificationsAllowed: true,
+    notifications: opts.notifications ?? 'granted',
     myMode: 'off',
     peerMode: 'off',
     videoUnlockAt: null,
@@ -206,7 +210,10 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
 
     async enableNotifications(): Promise<NotificationResult> {
       await wait()
-      return 'granted'
+      // The prompt says yes when it is allowed to appear at all.
+      if (state.notifications === 'default') state.notifications = 'granted'
+      const n = state.notifications
+      return n === 'granted' || n === 'denied' ? n : 'unsupported'
     },
 
     sendText(text) {
@@ -240,6 +247,8 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     },
 
     async setPushMuted(muted) {
+      // Like the real session: turning on without permission asks first.
+      if (!muted && state.notifications !== 'granted' && (await session.enableNotifications()) !== 'granted') return
       state.pushMuted = muted
     },
 
@@ -432,6 +441,9 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
     },
     setError(text) {
       state.error = text
+    },
+    setNotifications(support) {
+      state.notifications = support
     },
   }
   session.dev = dev

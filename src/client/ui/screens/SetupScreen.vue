@@ -6,13 +6,12 @@
 // people, "me" and "the friend" (owner, 2026-10-31).
 import { computed, defineAsyncComponent, ref } from 'vue'
 import { showToast } from 'vant'
-import type { NotificationResult } from '../../session/types'
 import { useDuo } from '../useDuo'
-import { isAppleTouch, isStandalone, parsePairingLink } from '../pairing'
+import { parsePairingLink } from '../pairing'
+import { isAppleTouch, isStandalone } from '../../push/support'
 import QrImage from '../components/QrImage.vue'
-import IconShare from '~icons/ph/export-fill'
-import IconAdd from '~icons/ph/plus-square-fill'
-import IconMenu from '~icons/ph/dots-three-vertical-bold'
+import InstallSteps from '../components/InstallSteps.vue'
+import NotifyHelp from '../components/NotifyHelp.vue'
 import IconDevice from '~icons/ph/device-mobile-fill'
 import IconScan from '~icons/ph/scan-fill'
 import IconBell from '~icons/ph/bell-ringing-fill'
@@ -23,6 +22,7 @@ const QrScanner = defineAsyncComponent(() => import('../components/QrScanner.vue
 
 const emit = defineEmits<{ done: [] }>()
 const duo = useDuo()
+const s = duo.state
 
 type Step = 'pair' | 'notify'
 const step = ref<Step>('pair')
@@ -38,7 +38,7 @@ const busy = ref(false)
 const problem = ref<string | null>(null)
 const link = ref<string | null>(null)
 const scanning = ref(false)
-const notify = ref<NotificationResult | null>(null)
+const helpOpen = ref(false)
 
 async function create() {
   problem.value = null
@@ -80,18 +80,24 @@ async function copyLink() {
   }
 }
 
+// The step offers only what can work here (push/support.ts via the session state): the button
+// while the browser can still ask, otherwise a pointer to the help (install, settings).
 async function enableNotifications() {
   busy.value = true
   try {
-    notify.value = await duo.enableNotifications()
+    await duo.enableNotifications()
   } finally {
     busy.value = false
   }
 }
 
-const notifyLabel = computed(
+const notifyHint = computed(
   () =>
-    ({ granted: 'включены ✅', denied: 'запрещены — включите в настройках', unsupported: 'не поддерживаются здесь' }) as const,
+    ({
+      'unsupported-install': 'На iPad уведомления работают только в приложении на экране «Домой» (см. выше).',
+      denied: 'Уведомления запрещены. Включить их можно только в настройках.',
+      unsupported: 'Этот браузер не умеет показывать уведомления.',
+    }) as const,
 )
 </script>
 
@@ -108,18 +114,7 @@ const notifyLabel = computed(
       <van-cell :title="apple ? 'Сначала добавьте на экран «Домой»' : 'Сначала установите приложение'" title-class="card-title">
         <template #icon><IconDevice class="cell-icon" /></template>
       </van-cell>
-      <div class="install-steps">
-        <template v-if="apple">
-          <div class="install-step"><IconShare class="install-icon" /><span>Поделиться</span></div>
-          <span class="install-arrow">→</span>
-          <div class="install-step"><IconAdd class="install-icon" /><span>На экран «Домой»</span></div>
-        </template>
-        <template v-else>
-          <div class="install-step"><IconMenu class="install-icon" /><span>Меню</span></div>
-          <span class="install-arrow">→</span>
-          <div class="install-step"><IconAdd class="install-icon" /><span>Установить приложение</span></div>
-        </template>
-      </div>
+      <InstallSteps :apple="apple" />
       <p class="install-note">
         Потом откройте чат со значка на экране и продолжайте там.
         <template v-if="apple">На iPad приложение со значка не видит данные Safari, поэтому пару нужно создавать уже в нём.</template>
@@ -181,13 +176,18 @@ const notifyLabel = computed(
     <!-- 2. Notifications (iOS: must be a tap inside the installed app) -->
     <van-cell-group v-else inset class="card">
       <p class="hint">Чтобы подружка могла позвать, когда приложение закрыто.</p>
-      <div class="card-actions">
-        <van-button round block type="primary" size="large" :loading="busy" :disabled="notify === 'granted'" data-test="notify" @click="enableNotifications">
+      <div v-if="s.notifications === 'granted' || s.notifications === 'default'" class="card-actions">
+        <van-button round block type="primary" size="large" :loading="busy" :disabled="s.notifications === 'granted'" data-test="notify" @click="enableNotifications">
           <template #icon><IconBell class="btn-inline-icon" /></template>
-          Включить уведомления
+          {{ s.notifications === 'granted' ? 'Уведомления включены ✅' : 'Включить уведомления' }}
         </van-button>
       </div>
-      <van-cell v-if="notify" title="Уведомления" :value="notifyLabel[notify]" />
+      <template v-else>
+        <p class="hint" data-test="notify-hint" :data-state="s.notifications">{{ notifyHint[s.notifications] }}</p>
+        <div class="card-actions">
+          <van-button round block size="large" data-test="notify-help-open" @click="helpOpen = true">Как включить</van-button>
+        </div>
+      </template>
       <div class="card-actions">
         <van-button round block size="large" type="success" data-test="done" @click="emit('done')">
           Готово — в чат
@@ -195,6 +195,7 @@ const notifyLabel = computed(
       </div>
     </van-cell-group>
 
+    <NotifyHelp v-model:show="helpOpen" :support="s.notifications" :apple="apple" :standalone="standalone" />
     <QrScanner v-if="role === 'join'" v-model:show="scanning" @found="join" />
   </div>
 </template>
@@ -240,31 +241,6 @@ const notifyLabel = computed(
   height: 28px;
   margin-right: 10px;
   color: var(--van-duo-lavender-ink);
-}
-.install-steps {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 8px 16px;
-}
-.install-step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--van-font-size-sm);
-  color: var(--van-text-color-2);
-  text-align: center;
-}
-.install-icon {
-  width: 40px;
-  height: 40px;
-  color: var(--van-duo-lavender-ink);
-}
-.install-arrow {
-  font-size: 24px;
-  color: var(--van-text-color-3);
 }
 .install-note {
   margin: 4px 16px 8px;

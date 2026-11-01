@@ -4,26 +4,13 @@
 
 import type { PushSubscriptionJSONLike, VapidKeyResponse } from '@shared/protocol'
 import type { NotificationResult } from '../session/types'
+import { pushSupported } from './support'
 
 export type PushEnv = {
   apiBase: string
   fetch?: typeof fetch
   /** How long to wait for the service worker to become ready. */
   swTimeoutMs?: number
-}
-
-/** Push works here and the person already allowed notifications. */
-export function notificationsGranted(): boolean {
-  return pushSupported() && Notification.permission === 'granted'
-}
-
-export function pushSupported(): boolean {
-  return (
-    typeof Notification !== 'undefined' &&
-    typeof navigator !== 'undefined' &&
-    'serviceWorker' in navigator &&
-    typeof PushManager !== 'undefined'
-  )
 }
 
 /**

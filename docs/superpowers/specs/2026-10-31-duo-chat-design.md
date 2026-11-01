@@ -189,7 +189,14 @@ budget, and never reveal to the sender whether the friend is in the app.
   this device gets no pushes at all; the server treats it like a device
   without a subscription. The choice is kept on the device and re-sent on
   every connect. Turning it on when the browser never allowed notifications
-  runs the permission prompt first.
+  runs the permission prompt first. The switch shows only where it can work
+  (`push/support.ts`: permission 'default' or 'granted', re-read whenever the
+  page is shown). Otherwise (owner, 2026-11-01) a greyed bell button opens a
+  full-screen help for the adult: in an iPad/iPhone Safari tab, how to add the
+  app to the Home Screen and that the installed app needs a new pair (its
+  storage is separate); when blocked, where to allow it in the settings; when
+  the browser has no push, another browser or installing. Chat and calls work
+  in a plain tab either way.
 - **Lifetime.** Web Push TTL for every push is 1 hour (`INVITE_TTL_MS`).
   One tag (`duo`) with renotify, so a new notification replaces the old one: at
   most one on screen. Ping and message notifications carry `expiresAt` (+1 h);

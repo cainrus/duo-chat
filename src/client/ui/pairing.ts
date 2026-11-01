@@ -26,13 +26,3 @@ export function qrDataUrl(text: string): string {
   const svg = renderSVG(text, { border: 2, pixelSize: 8, whiteColor: '#FFFFFF', blackColor: '#2B2440' })
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
-
-export function isStandalone(): boolean {
-  const nav = navigator as Navigator & { standalone?: boolean }
-  return nav.standalone === true || (typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches)
-}
-
-export function isAppleTouch(): boolean {
-  const ua = navigator.userAgent
-  return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
-}

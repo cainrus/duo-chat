@@ -6,6 +6,9 @@ import type { CallEndReason, RoomView } from '@shared/protocol'
 import type { Side } from '@shared/types'
 import type { ChatMessage } from '../messages/store'
 import type { StickerId } from '../stickers/catalog'
+import type { NotificationSupport } from '../push/support'
+
+export type { NotificationSupport }
 
 export type Connection = 'offline' | 'connecting' | 'online'
 
@@ -36,8 +39,11 @@ export type DuoState = {
   directOpen: boolean
   /** The bell: this device asked for no pushes (kept on the device, re-sent on every connect). */
   pushMuted: boolean
-  /** The browser allows notifications for this app (permission granted and push supported). */
-  notificationsAllowed: boolean
+  /**
+   * Can notifications work here (push/support.ts); 'granted' means allowed and subscribed. Read
+   * at start, after asking, and again whenever the page is shown (settings may have changed).
+   */
+  notifications: NotificationSupport
   /** This side's call switch. Back to 'off' whenever the call ends. */
   myMode: CallMode
   /**
