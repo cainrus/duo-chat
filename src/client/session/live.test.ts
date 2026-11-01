@@ -1180,3 +1180,64 @@ describe('live session: the voice room service line', () => {
     expect(h.peer().out).toContainEqual({ t: 'ack', ids: ['v1'] })
   })
 })
+
+describe('live session: stickers', () => {
+  let config: DeviceConfig
+  beforeEach(async () => {
+    config = (await paired()).config
+  })
+
+  it('a sticker goes out like a message: outbox, "wrote" (no id) to the server, pending until acked', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.session.sendSticker('spy:love')
+    const [m] = h.session.state.messages
+    expect(m).toMatchObject({ from: 'a', text: 'spy:love', kind: 'sticker', sentAt: T0 })
+    expect(h.session.state.pendingIds).toEqual([m!.id])
+    expect(h.link().sentOf('wrote')).toEqual([{ t: 'wrote' }])
+    // The server never hears which sticker.
+    expect(JSON.stringify(h.link().sent)).not.toContain('spy:love')
+    expect(h.peer().out).toEqual([])
+
+    h.peer().setOpen(true)
+    expect(h.peer().out).toEqual([{ t: 'msg', m: { id: m!.id, from: 'a', text: 'spy:love', sentAt: T0, kind: 'sticker' } }])
+    h.peer().receive({ t: 'ack', ids: [m!.id] })
+    expect(h.session.state.pendingIds).toEqual([])
+  })
+
+  it('an unknown sticker is not sent at all', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.peer().setOpen(true)
+    h.session.sendSticker('spy:dance' as never)
+    expect(h.session.state.messages).toEqual([])
+    expect(h.peer().out).toEqual([])
+    expect(h.link().sentOf('wrote')).toHaveLength(0)
+  })
+
+  it('receives a known sticker and acks it; an unknown one is dropped but acked, so she stops resending', async () => {
+    h = harness({ config })
+    await h.session.ready
+    h.peer().setOpen(true)
+    h.peer().receive({ t: 'msg', m: { id: 's1', from: 'b', text: 'noto:1f431', sentAt: T0, kind: 'sticker' } })
+    h.peer().receive({ t: 'msg', m: { id: 's2', from: 'b', text: 'noto:evil', sentAt: T0, kind: 'sticker' } })
+    h.peer().receive({ t: 'msg', m: { id: 's3', from: 'b', text: '<img src=x>', sentAt: T0, kind: 'sticker' } })
+    expect(h.session.state.messages).toEqual([{ id: 's1', from: 'b', text: 'noto:1f431', sentAt: T0, kind: 'sticker' }])
+    const acks = h.peer().out.filter((f) => f.t === 'ack').flatMap((f) => (f.t === 'ack' ? f.ids : []))
+    expect(acks).toEqual(['s1', 's2', 's3'])
+  })
+
+  it('a sticker disappears when its hour is over', async () => {
+    vi.useFakeTimers({ now: T0 })
+    h = harness({ config })
+    h.clock.now = T0
+    await h.session.ready
+    h.peer().setOpen(true)
+    h.peer().receive({ t: 'msg', m: { id: 's1', from: 'b', text: 'spy:happy', sentAt: T0, kind: 'sticker' } })
+    h.session.sendSticker('noto:1f44b')
+    expect(h.session.state.messages).toHaveLength(2)
+    h.clock.now = T0 + MESSAGE_TTL_MS
+    vi.advanceTimersByTime(MESSAGE_TTL_MS)
+    expect(h.session.state.messages).toEqual([])
+  })
+})

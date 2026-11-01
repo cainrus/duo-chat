@@ -6,15 +6,18 @@
 
 import { MESSAGE_TTL_MS } from '@shared/constants'
 import type { Side } from '@shared/types'
+import { isStickerId, type StickerId } from '../stickers/catalog'
 
 export const MAX_MESSAGE_LENGTH = 1000
 
 /**
  * A chat item. `kind: 'voice'` (no text) is a service line: its sender waited in the voice room
  * and left before the friend joined. It travels and expires exactly like a message.
- * A plain text message has no `kind` (an incoming `'text'` is accepted too).
+ * `kind: 'sticker'` carries a sticker id in `text` (`spy:<mood>` or `noto:<codepoint>`), checked
+ * against the known lists on receipt. A plain text message has no `kind` (an incoming `'text'`
+ * is accepted too).
  */
-export type ChatMessage = { id: string; from: Side; text: string; sentAt: number; kind?: 'voice' }
+export type ChatMessage = { id: string; from: Side; text: string; sentAt: number; kind?: 'voice' | 'sticker' }
 
 export type StoredMessage = ChatMessage & {
   expiresAt: number
@@ -72,6 +75,12 @@ export class MessageStore {
     return this.add({ id: this.newId(), from: this.self, text: '', sentAt: this.now(), kind: 'voice' })
   }
 
+  /** Adds our sticker to the timeline and the outbox. Throws on an unknown sticker id. */
+  composeSticker(id: StickerId): ChatMessage {
+    if (!isStickerId(id)) throw new Error('unknown sticker')
+    return this.add({ id: this.newId(), from: this.self, text: id, sentAt: this.now(), kind: 'sticker' })
+  }
+
   private add(msg: ChatMessage): ChatMessage {
     this.messages.push({ ...msg, expiresAt: msg.sentAt + MESSAGE_TTL_MS, pending: true })
     this.persist()
@@ -90,16 +99,17 @@ export class MessageStore {
     if (typeof id !== 'string' || id.length === 0 || id.length > 100) return false
     const other: Side = this.self === 'a' ? 'b' : 'a'
     if (from !== other) return false
-    if (kind !== undefined && kind !== 'text' && kind !== 'voice') return false
-    const voice = kind === 'voice'
+    if (kind !== undefined && kind !== 'text' && kind !== 'voice' && kind !== 'sticker') return false
     if (typeof text !== 'string') return false
-    if (voice ? text !== '' : text.length < 1 || text.length > MAX_MESSAGE_LENGTH) return false
+    if (kind === 'voice' ? text !== '' : kind === 'sticker' ? !isStickerId(text) : text.length < 1 || text.length > MAX_MESSAGE_LENGTH)
+      return false
     if (typeof sentAt !== 'number' || !Number.isFinite(sentAt)) return false
     if (this.messages.some((x) => x.id === id)) return false
     const now = this.now()
     const expiresAt = Math.min(sentAt, now) + MESSAGE_TTL_MS
     if (expiresAt <= now) return false
-    this.messages.push({ id, from: other, text, sentAt, ...(voice ? { kind: 'voice' as const } : {}), expiresAt, pending: false })
+    const special = kind === 'voice' || kind === 'sticker' ? { kind: kind as 'voice' | 'sticker' } : {}
+    this.messages.push({ id, from: other, text, sentAt, ...special, expiresAt, pending: false })
     this.persist()
     this.emit()
     return true
@@ -184,5 +194,5 @@ function byTime(a: StoredMessage, b: StoredMessage): number {
 
 function toChat(m: StoredMessage): ChatMessage {
   const c: ChatMessage = { id: m.id, from: m.from, text: m.text, sentAt: m.sentAt }
-  return m.kind === 'voice' ? { ...c, kind: 'voice' } : c
+  return m.kind === 'voice' || m.kind === 'sticker' ? { ...c, kind: m.kind } : c
 }

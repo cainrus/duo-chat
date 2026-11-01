@@ -173,3 +173,53 @@ describe('voice room service items', () => {
     expect(store.timeline().at(-1)).toEqual({ id: 'v5', from: 'b', text: 'ok', sentAt: T0 })
   })
 })
+
+describe('stickers', () => {
+  it('composes a sticker that goes through the outbox, persists and expires like a message', async () => {
+    const { store, setNow, persistence } = makeStore()
+    await store.init()
+    const item = store.composeSticker('spy:wink')
+    expect(item).toEqual({ id: 'id1', from: 'a', text: 'spy:wink', sentAt: T0, kind: 'sticker' })
+    expect(store.outbox()).toEqual([item])
+    store.markSent(['id1'])
+    expect(store.outbox()).toEqual([])
+    await store.flush()
+    expect(persistence.saved).toEqual([{ ...item, expiresAt: T0 + MESSAGE_TTL_MS, pending: false }])
+
+    // Survives a reload within the hour.
+    const reloaded = new MessageStore({ self: 'a', persistence, now: () => T0 + 1 })
+    await reloaded.init()
+    expect(reloaded.timeline()).toEqual([item])
+
+    setNow(T0 + MESSAGE_TTL_MS)
+    store.sweep()
+    expect(store.timeline()).toEqual([])
+  })
+
+  it('refuses to compose an unknown sticker', async () => {
+    const { store } = makeStore()
+    await store.init()
+    expect(() => store.composeSticker('spy:dance' as never)).toThrow(/unknown sticker/)
+    expect(store.timeline()).toEqual([])
+  })
+
+  it('accepts a known sticker from the friend and drops unknown or malformed ids', async () => {
+    const { store } = makeStore()
+    await store.init()
+    expect(store.receive({ id: 's1', from: 'b', text: 'noto:1f984', sentAt: T0, kind: 'sticker' })).toBe(true)
+    expect(store.receive({ id: 's2', from: 'b', text: 'spy:sleep', sentAt: T0 + 1, kind: 'sticker' })).toBe(true)
+    expect(store.timeline()).toEqual([
+      { id: 's1', from: 'b', text: 'noto:1f984', sentAt: T0, kind: 'sticker' },
+      { id: 's2', from: 'b', text: 'spy:sleep', sentAt: T0 + 1, kind: 'sticker' },
+    ])
+    for (const text of ['spy:dance', 'noto:1f4a9', 'noto:../../evil', 'https://x.example/a.gif', 'spy:', '', ' spy:happy', 'SPY:HAPPY']) {
+      expect(store.receive({ id: `bad-${text}`, from: 'b', text, sentAt: T0, kind: 'sticker' }), text).toBe(false)
+    }
+    expect(store.receive({ id: 'bad-num', from: 'b', text: 42, sentAt: T0, kind: 'sticker' })).toBe(false)
+    // A sticker from our own side is a spoof.
+    expect(store.receive({ id: 's3', from: 'a', text: 'spy:happy', sentAt: T0, kind: 'sticker' })).toBe(false)
+    // Expired by the sender's stamp: refused like any message.
+    expect(store.receive({ id: 's4', from: 'b', text: 'spy:happy', sentAt: T0 - MESSAGE_TTL_MS, kind: 'sticker' })).toBe(false)
+    expect(store.timeline()).toHaveLength(2)
+  })
+})

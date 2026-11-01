@@ -15,6 +15,7 @@ import {
   VIDEO_UNLOCK_MS,
 } from '@shared/constants'
 import { MAX_MESSAGE_LENGTH, type ChatMessage } from '../messages/store'
+import { isStickerId, NOTO_STICKERS, SPY_STICKERS, type StickerId } from '../stickers/catalog'
 import type { CallMode, Connection, DuoSession, DuoState, NotificationResult } from './types'
 
 export type FakeOptions = {
@@ -36,6 +37,8 @@ export type FakeDev = {
   peerLeaves(): void
   peerUnpaired(): void
   peerSays(text?: string): void
+  /** She sends a sticker (a random one of the pack when no id is given). */
+  peerSticker(pack: 'spy' | 'noto', id?: StickerId): void
   seedChat(): void
   expireOldest(): void
   clearChat(): void
@@ -101,6 +104,11 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
   const wait = () => new Promise<void>((r) => setTimeout(r, latency))
   const add = (from: Side, text: string) => {
     const msg: ChatMessage = { id: `m${++idSeq}`, from, text, sentAt: now() }
+    state.messages.push(msg)
+    return msg
+  }
+  const addSticker = (from: Side, id: StickerId) => {
+    const msg: ChatMessage = { id: `m${++idSeq}`, from, text: id, sentAt: now(), kind: 'sticker' }
     state.messages.push(msg)
     return msg
   }
@@ -209,6 +217,16 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       if (options.autoReply && state.view?.peerPresent) {
         clearTimeout(replyTimer)
         replyTimer = setTimeout(() => dev.peerSays(), 1200)
+      }
+    },
+
+    sendSticker(id) {
+      if (!isStickerId(id)) return
+      const msg = addSticker(mySide, id)
+      if (!state.directOpen) state.pendingIds.push(msg.id)
+      if (options.autoReply && state.view?.peerPresent) {
+        clearTimeout(replyTimer)
+        replyTimer = setTimeout(() => dev.peerSticker(id.startsWith('spy:') ? 'spy' : 'noto'), 1200)
       }
     },
 
@@ -325,6 +343,13 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       clearTimeout(pingTimer)
       view().ping = { kind: 'ready' }
     },
+    peerSticker(pack, id) {
+      const list = pack === 'spy' ? SPY_STICKERS : NOTO_STICKERS
+      addSticker(peerSide, id ?? list[idSeq % list.length]!)
+      pingPushes = 0
+      clearTimeout(pingTimer)
+      view().ping = { kind: 'ready' }
+    },
     seedChat() {
       const t = now()
       const seed: [Side, string, number][] = [
@@ -339,6 +364,15 @@ export function createFakeSession(opts: FakeOptions = {}): FakeSession {
       ]
       for (const [from, text, minAgo] of seed) {
         state.messages.push({ id: `m${++idSeq}`, from, text, sentAt: t - minAgo * 60_000 })
+      }
+      const stickers: [Side, StickerId, number][] = [
+        [peerSide, 'spy:wink', 1.5],
+        [mySide, 'noto:1f984', 1],
+        [peerSide, 'noto:1f973', 0.5],
+        [mySide, 'spy:love', 0.2],
+      ]
+      for (const [from, id, minAgo] of stickers) {
+        state.messages.push({ id: `m${++idSeq}`, from, text: id, sentAt: t - minAgo * 60_000, kind: 'sticker' })
       }
     },
     expireOldest() {

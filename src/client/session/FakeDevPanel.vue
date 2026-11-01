@@ -31,6 +31,8 @@ const groups: { title: string; items: Btn[] }[] = [
       { label: 'Не подключена', run: () => dev.peerUnpaired() },
       { label: 'Пишет', run: () => dev.peerSays() },
       { label: 'Эмодзи', run: () => dev.peerSays('🦄🌈') },
+      { label: 'Стикер шпиона', run: () => dev.peerSticker('spy') },
+      { label: 'Стикер Noto', run: () => dev.peerSticker('noto') },
     ],
   },
   {

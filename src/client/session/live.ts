@@ -785,6 +785,21 @@ export function createLiveSession(opts: LiveOptions = {}): LiveSession {
       rt.link.send({ t: 'wrote' })
     },
 
+    sendSticker(id) {
+      if (!rt) {
+        setError(T.notPaired)
+        return
+      }
+      try {
+        rt.store.composeSticker(id)
+      } catch {
+        return
+      }
+      flushOutbox()
+      // Like text: the server only hears that something was written, never which sticker.
+      rt.link.send({ t: 'wrote' })
+    },
+
     ping() {
       rt?.link.send({ t: 'ping' })
     },

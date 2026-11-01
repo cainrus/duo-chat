@@ -5,6 +5,7 @@
 import type { CallEndReason, RoomView } from '@shared/protocol'
 import type { Side } from '@shared/types'
 import type { ChatMessage } from '../messages/store'
+import type { StickerId } from '../stickers/catalog'
 
 export type Connection = 'offline' | 'connecting' | 'online'
 
@@ -77,6 +78,8 @@ export interface DuoSession {
 
   // --- chat ---
   sendText(text: string): void
+  /** Sends a sticker at once: a chat message like text (outbox, ack, 1-hour life). */
+  sendSticker(id: StickerId): void
   /**
    * «онлайн»: spends an invitation from the shared budget; the server pushes «онлайн» to the
    * friend only if she is away. Nothing comes back: the button's view is the feedback, and it
